@@ -13,7 +13,6 @@ implementation.
 + Iterating over all entries is always `O(n)`, same as `Vec<(K, V)>`.
 + There are no buckets, so there is no need to re-bucket things when growing
   the map.
-+ Growing the map is just one reallocation.
 
 ## When should you use this?
 
