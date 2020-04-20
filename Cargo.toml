@@ -1,8 +1,8 @@
 [package]
 name = "ordnung"
-version = "0.0.0"
+version = "0.0.1"
 authors = ["Maciej Hirsz <hello@maciej.codes>"]
-description = "Fast, insertion-order-preserving map"
+description = "Fast, vector-based map implementation that preserves insertion order."
 edition = "2018"
 license = "MIT OR Apache-2.0"
 readme = "./README.md"
