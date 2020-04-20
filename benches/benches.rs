@@ -101,7 +101,7 @@ macro_rules! bench_all {
         #[allow(non_snake_case)]
         fn create__ordnung(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: Map<&str, usize> = Map::new();
+                let mut map = Map::new();
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                     map.insert(key, value);
@@ -127,7 +127,7 @@ macro_rules! bench_all {
         #[bench]
         fn create_fnv_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: FnvHashMap<&str, usize> = FnvHashMap::default();
+                let mut map = FnvHashMap::default();
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                     map.insert(key, value);
@@ -140,7 +140,7 @@ macro_rules! bench_all {
         #[bench]
         fn create_rustc_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: FxHashMap<&str, usize> = FxHashMap::default();
+                let mut map = FxHashMap::default();
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                     map.insert(key, value);
@@ -153,7 +153,7 @@ macro_rules! bench_all {
         #[bench]
         fn create_std_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: HashMap<&str, usize> = HashMap::new();
+                let mut map = HashMap::new();
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                     map.insert(key, value);
@@ -167,7 +167,7 @@ macro_rules! bench_all {
         #[allow(non_snake_case)]
         fn prealloc_create__ordnung(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: Map<&str, usize> = Map::with_capacity($cap);
+                let mut map = Map::with_capacity($cap);
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                     map.insert(key, value);
@@ -194,7 +194,7 @@ macro_rules! bench_all {
         #[bench]
         fn prealloc_create_fnv_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: FnvHashMap<&str, usize> = FnvHashMap::default();
+                let mut map = FnvHashMap::default();
                 map.reserve($cap);
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
@@ -208,7 +208,7 @@ macro_rules! bench_all {
         #[bench]
         fn prealloc_create_rustc_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: FxHashMap<&str, usize> = FxHashMap::default();
+                let mut map = FxHashMap::default();
                 map.reserve($cap);
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
@@ -222,7 +222,7 @@ macro_rules! bench_all {
         #[bench]
         fn prealloc_create_std_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: HashMap<&str, usize> = HashMap::with_capacity($cap);
+                let mut map = HashMap::with_capacity($cap);
 
                 for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                     map.insert(key, value);
@@ -237,7 +237,7 @@ macro_rules! bench_all {
         #[bench]
         #[allow(non_snake_case)]
         fn x_index__ordnung(b: &mut Bencher) {
-            let mut map: Map<&str, usize> = Map::new();
+            let mut map = Map::new();
 
             for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                 map.insert(key, value);
@@ -267,7 +267,7 @@ macro_rules! bench_all {
 
         #[bench]
         fn x_index_fnv_hashmap(b: &mut Bencher) {
-            let mut map: FnvHashMap<&str, usize> = FnvHashMap::default();
+            let mut map = FnvHashMap::default();
 
             for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                 map.insert(key, value);
@@ -282,7 +282,7 @@ macro_rules! bench_all {
 
         #[bench]
         fn x_index_rustc_hashmap(b: &mut Bencher) {
-            let mut map: FxHashMap<&str, usize> = FxHashMap::default();
+            let mut map = FxHashMap::default();
 
             for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                 map.insert(key, value);
@@ -297,7 +297,7 @@ macro_rules! bench_all {
 
         #[bench]
         fn x_index_std_hashmap(b: &mut Bencher) {
-            let mut map: HashMap<&str, usize> = HashMap::new();
+            let mut map = HashMap::new();
 
             for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
                 map.insert(key, value);

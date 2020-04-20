@@ -1,17 +1,17 @@
 //! # Ordnung
 //!
-//! Ordnung is a simple, `Vec`-based, insertion order preserving map
-//! implementation.
+//! Fast, vector-based map implementation that preserves insertion order.
 //!
-//! + Mapping is implemented as a binary tree over a `Vec` for storage, with
-//!   only two extra words per entry for book-keeping on 64-bit architectures.
+//! + Map is implemented as a binary tree over a `Vec` for storage, with only
+//!   two extra words per entry for book-keeping on 64-bit architectures.
 //! + A fast hash function with good random distribution is used to balance the
 //!   tree. Ordnung makes no guarantees that the tree will be perfectly
 //!   balanced, but key lookup should be approaching `O(log n)` in most cases.
 //! + Tree traversal is always breadth-first and happens over a single
 //!   continuous block of memory, which makes it cache friendly.
 //! + Iterating over all entries is always `O(n)`, same as `Vec<(K, V)>`.
-//! + Growing the map is just one reallocation.
+//! + There are no buckets, so there is no need to re-bucket things when growing
+//!   the map.
 //!
 //! ## When should you use this?
 //!
@@ -31,8 +31,9 @@ use core::num::NonZeroU32;
 use core::iter::FromIterator;
 use core::cell::Cell;
 use core::hash::{Hash, Hasher};
+use core::ops::Index;
 
-mod compact;
+pub mod compact;
 
 pub use compact::Vec;
 // use alloc::vec::Vec;
@@ -123,7 +124,10 @@ enum FindResult<'find> {
 
 use FindResult::*;
 
-impl<K, V> Map<K, V> {
+impl<K, V> Map<K, V>
+where
+    K: Hash + Eq,
+{
     /// Create a new `Map`.
     #[inline]
     pub fn new() -> Self {
@@ -140,36 +144,35 @@ impl<K, V> Map<K, V> {
         }
     }
 
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.store.len()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.store.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.store.clear();
-    }
-}
-
-impl<K, V> Map<K, V>
-where
-    K: Hash + Eq,
-{
-    /// Insert a new entry, or override an existing one.
-    pub fn insert<Q>(&mut self, key: Q, value: V)
-    where
-        Q: Into<K>,
-    {
-        let key = key.into();
+    /// Inserts a key-value pair into the map.
+    ///
+    /// If the map did not have this key present, `None` is returned.
+    ///
+    /// If the map did have this key present, the value is updated, and the old
+    /// value is returned. The key is not updated, though; this matters for
+    /// types that can be `==` without being identical.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// assert_eq!(map.insert(37, "a"), None);
+    /// assert_eq!(map.is_empty(), false);
+    ///
+    /// map.insert(37, "b");
+    /// assert_eq!(map.insert(37, "c"), Some("b"));
+    /// assert_eq!(map[&37], "c");
+    /// ```
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let hash = hash_key(&key);
 
         match self.find(&key, hash) {
             Hit(idx) => unsafe {
-                self.store.get_unchecked_mut(idx).value = value;
+                let slot = &mut self.store.get_unchecked_mut(idx).value;
+
+                Some(core::mem::replace(slot, value))
             },
             Miss(parent) => {
                 if let Some(parent) = parent {
@@ -177,10 +180,27 @@ where
                 }
 
                 self.store.push(Node::new(key, value, hash));
+
+                None
             },
         }
     }
 
+    /// Returns a reference to the value corresponding to the key.
+    ///
+    /// The key may be any borrowed form of the map's key type, but `Hash` and
+    /// `Eq` on the borrowed form must match those for the key type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.get(&1), Some(&"a"));
+    /// assert_eq!(map.get(&2), None);
+    /// ```
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -194,6 +214,51 @@ where
         }
     }
 
+    /// Returns `true` if the map contains a value for the specified key.
+    ///
+    /// The key may be any borrowed form of the map's key type, but `Hash` and
+    /// `Eq` on the borrowed form must match those for the key type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.contains_key(&1), true);
+    /// assert_eq!(map.contains_key(&2), false);
+    /// ```
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let hash = hash_key(key);
+
+        match self.find(key, hash) {
+            Hit(_) => true,
+            Miss(_) => false,
+        }
+    }
+
+    /// Returns a mutable reference to the value corresponding to the key.
+    ///
+    /// The key may be any borrowed form of the map's key type, but Hash and Eq
+    /// on the borrowed form must match those for the key type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert(1, "a");
+    /// if let Some(x) = map.get_mut(&1) {
+    ///     *x = "b";
+    /// }
+    /// assert_eq!(map[&1], "b");
+    /// ```
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
@@ -207,9 +272,11 @@ where
         }
     }
 
-    pub fn get_or_insert<Q, F>(&mut self, key: Q, fill: F) -> &mut V
+    /// Get a mutable reference to entry at key. Inserts a new entry by
+    /// calling `F` if absent.
+    // TODO: Replace with entry API
+    pub fn get_or_insert<F>(&mut self, key: K, fill: F) -> &mut V
     where
-        Q: Into<K>,
         F: FnOnce() -> V,
     {
         let key = key.into();
@@ -231,8 +298,22 @@ where
         }
     }
 
-    /// Attempts to remove the value behind `key`, if successful
-    /// will return the `JsonValue` stored behind the `key`.
+    /// Removes a key from the map, returning the value at the key if the key
+    /// was previously in the map.
+    ///
+    /// The key may be any borrowed form of the map's key type, but `Hash` and
+    /// `Eq` on the borrowed form must match those for the key type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.remove(&1), Some("a"));
+    /// assert_eq!(map.remove(&1), None);
+    /// ```
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
@@ -246,9 +327,7 @@ where
         };
 
         // Removing a node would screw the tree badly, it's easier to just
-        // recreate it. This is a very costly operation, but removing nodes
-        // in JSON shouldn't happen very often if at all. Optimizing this
-        // can wait for better times.
+        // recreate it.
         let mut removed = None;
         let capacity = self.store.len();
         let old = mem::replace(&mut self.store, Vec::with_capacity(capacity));
@@ -269,6 +348,24 @@ where
         }
 
         removed
+    }
+
+    /// Returns the number of elements in the map.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    /// Returns `true` if the map contains no elements.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.store.is_empty()
+    }
+
+    /// Clears the map, removing all key-value pairs. Keeps the allocated memory for reuse.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.store.clear();
     }
 
     #[inline]
@@ -302,6 +399,30 @@ where
         }
     }
 
+    /// An iterator visiting all key-value pairs in insertion order.
+    /// The iterator element type is `(&K, &V)`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// map.insert("c", 3);
+    ///
+    /// let entries: Vec<_> = map.iter().collect();
+    ///
+    /// assert_eq!(
+    ///     entries,
+    ///     &[
+    ///         (&"a", &1),
+    ///         (&"b", &2),
+    ///         (&"c", &3),
+    ///     ],
+    /// );
+    /// ```
     #[inline]
     pub fn iter(&self) -> Iter<K, V> {
         Iter {
@@ -309,11 +430,59 @@ where
         }
     }
 
+    /// An iterator visiting all key-value pairs in insertion order, with
+    /// mutable references to the values. The iterator element type is
+    /// (&K, &mut V).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// map.insert("c", 3);
+    ///
+    /// // Update all values
+    /// for (_, val) in map.iter_mut() {
+    ///     *val *= 2;
+    /// }
+    ///
+    /// // Check if values are doubled
+    /// let entries: Vec<_> = map.iter().collect();
+    ///
+    /// assert_eq!(
+    ///     entries,
+    ///     &[
+    ///         (&"a", &2),
+    ///         (&"b", &4),
+    ///         (&"c", &6),
+    ///     ],
+    /// );
+    /// ```
     #[inline]
     pub fn iter_mut(&mut self) -> IterMut<K, V> {
         IterMut {
             inner: self.store.iter_mut()
         }
+    }
+}
+
+impl<K, Q: ?Sized, V> Index<&Q> for Map<K, V>
+where
+    K: Eq + Hash + Borrow<Q>,
+    Q: Eq + Hash,
+{
+    type Output = V;
+
+    /// Returns a reference to the value corresponding to the supplied key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the key is not present in the HashMap.
+    fn index(&self, key: &Q) -> &V {
+        self.get(key).expect("Key not found in Map")
     }
 }
 
@@ -331,7 +500,7 @@ where
         let mut map = Map::with_capacity(iter.size_hint().0);
 
         for (key, value) in iter {
-            map.insert(key, value.into());
+            map.insert(key.into(), value.into());
         }
 
         map
@@ -366,10 +535,18 @@ where
     }
 }
 
+/// An iterator over the entries of a `Map`.
+///
+/// This struct is created by the [`iter`](./struct.Map.html#method.iter)
+/// method on [`Map`](./struct.Map.html). See its documentation for more.
 pub struct Iter<'a, K, V> {
     inner: slice::Iter<'a, Node<K, V>>,
 }
 
+/// A mutable iterator over the entries of a `Map`.
+///
+/// This struct is created by the [`iter_mut`](./struct.Map.html#method.iter_mut)
+/// method on [`Map`](./struct.Map.html). See its documentation for more.
 pub struct IterMut<'a, K, V> {
     inner: slice::IterMut<'a, Node<K, V>>,
 }

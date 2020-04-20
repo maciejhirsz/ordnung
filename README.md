@@ -1,10 +1,9 @@
 # Ordnung
 
-Ordnung is a simple, `Vec`-based, insertion order preserving map
-implementation.
+Fast, vector-based map implementation that preserves insertion order.
 
-+ Mapping is implemented as a binary tree over a `Vec` for storage, with
-  only two extra words per entry for book-keeping on 64-bit architectures.
++ Map is implemented as a binary tree over a `Vec` for storage, with only
+  two extra words per entry for book-keeping on 64-bit architectures.
 + A fast hash function with good random distribution is used to balance the
   tree. Ordnung makes no guarantees that the tree will be perfectly
   balanced, but key lookup should be approaching `O(log n)` in most cases.
@@ -13,7 +12,6 @@ implementation.
 + Iterating over all entries is always `O(n)`, same as `Vec<(K, V)>`.
 + There are no buckets, so there is no need to re-bucket things when growing
   the map.
-+ Growing the map is just one reallocation.
 
 ## When should you use this?
 
