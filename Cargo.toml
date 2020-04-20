@@ -1,0 +1,20 @@
+[package]
+name = "ordnung"
+version = "0.1.0"
+authors = ["Maciej Hirsz <hello@maciej.codes>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "./README.md"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+fnv = "1.0.6"
+ahash = "0.3.2"
+rustc-hash = "1.0"
+
+[dev-dependencies]
+
+[profile.bench]
+lto = 'fat'
+debug-assertions = false
+codegen-units = 1
