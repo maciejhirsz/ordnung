@@ -2,6 +2,7 @@
 name = "ordnung"
 version = "0.0.0"
 authors = ["Maciej Hirsz <hello@maciej.codes>"]
+description = "Fast, insertion order preserving map"
 edition = "2018"
 license = "MIT OR Apache-2.0"
 readme = "./README.md"
