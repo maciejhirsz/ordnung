@@ -218,6 +218,7 @@ impl<T: Clone> Clone for Vec<T> {
 impl<T> Deref for Vec<T> {
     type Target = [T];
 
+    #[inline]
     fn deref(&self) -> &[T] {
         let (len, _) = self.parts();
 
@@ -228,6 +229,7 @@ impl<T> Deref for Vec<T> {
 }
 
 impl<T> DerefMut for Vec<T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
         let (len, _) = self.parts();
 
