@@ -5,6 +5,8 @@ authors = ["Maciej Hirsz <hello@maciej.codes>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 readme = "./README.md"
+documentation = "https://docs.rs/ordnung"
+repository = "https://github.com/maciejhirsz/ordnung"
 
 [dependencies]
 fnv = "1.0.6"
