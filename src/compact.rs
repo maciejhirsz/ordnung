@@ -68,15 +68,18 @@ impl<T> Vec<T> {
 
             self.ptr = unsafe { pack_unchecked(stdvec.as_mut_ptr(), len, stdvec.capacity()) }
         }
-        unsafe { self.as_mut_ptr().add(len).write(val) }
-        self.set_len(len + 1);
+        unsafe { 
+            self.as_mut_ptr().add(len).write(val);
+            self.set_len(len + 1);
+        }
+        
     }
 
     /// Removes the last element from a vector and returns it, or `None` if it is empty.
     pub fn pop(&mut self) -> Option<T> {
         let len = self.len().checked_sub(1)?;
 
-        self.set_len(len);
+        unsafe{ self.set_len(len) };
 
         Some(unsafe {
             self.as_mut_ptr().add(len).read()
@@ -122,7 +125,8 @@ impl<T> Vec<T> {
         self.ptr.cast().as_ptr()
     }
 
-    fn set_len(&mut self, len: usize) {
+    /// Sets the length
+    pub unsafe fn set_len(&mut self, len: usize) {
         let (_, cap) = self.parts();
 
         self.ptr = unsafe {
@@ -279,8 +283,8 @@ impl<T> FromIterator<T> for Vec<T> {
     }
 }
 
-impl<T: PartialEq> PartialEq for Vec<T> {
-    fn eq(&self, other: &Vec<T>) -> bool {
+impl<T1, T2> PartialEq<Vec<T2>> for Vec<T1> where T1: PartialEq<T2> {
+    fn eq(&self, other: &Vec<T2>) -> bool {
         self.deref() == other.deref()
     }
 }
