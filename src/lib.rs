@@ -38,6 +38,41 @@ pub mod compact;
 pub use compact::Vec;
 // use alloc::vec::Vec;
 
+/// Iterator over the keys
+pub struct Keys<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+impl<'a, K, V> Iterator for Keys<'a, K, V> {
+    type Item = &'a K;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a K> {
+        self.inner.next().map(|(k, _)| k)
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+//#[derive(Clone)]
+/// Iterator over the values
+pub struct Values<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+impl<'a, K, V> Iterator for Values<'a, K, V> {
+    type Item = &'a V;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a V> {
+        self.inner.next().map(|(_, v)| v)
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
 #[inline]
 fn hash_key<H: Hash>(hash: H) -> u64 {
     // let mut hasher = fnv::FnvHasher::default();
@@ -129,6 +164,18 @@ impl<K, V> Map<K, V>
 where
     K: Hash + Eq,
 {
+    /// An iterator visiting all keys in arbitrary order.
+    /// The iterator element type is `&'a K`.
+    pub fn keys(&self) -> Keys<'_, K, V> {
+        Keys { inner: self.iter() }
+    }
+    
+    /// An iterator visiting all values in arbitrary order.
+    /// The iterator element type is `&'a V`.
+    pub fn values(&self) -> Values<'_, K, V> {
+        Values { inner: self.iter() }
+    }
+
     /// Create a new `Map`.
     #[inline]
     pub fn new() -> Self {
@@ -455,6 +502,51 @@ where
         }
     }
 }
+
+impl<K, V> IntoIterator for Map<K, V> {
+    type Item = (K, V);
+    type IntoIter = IntoIter<K, V>;
+
+    #[inline]
+    fn into_iter(self) -> IntoIter<K, V> {
+        IntoIter(self)
+    }
+}
+
+/// Consuming iterator
+pub struct IntoIter<K, V>(Map<K, V>);
+impl<K, V> IntoIter<K, V> {
+    /// The length of this iterator
+    pub fn len(&self) -> usize {
+        self.0.store.len()
+    }
+    /// If this iteratoris empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        loop{
+            if let Some(n) = self.0.store.pop() {
+                if let Some(v) = n.value {
+                    return Some((n.key, v))
+                } 
+            } else {
+                return None
+            }
+        }
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let l = self.0.store.len();
+        (l, Some(l))
+    }
+}
+
 
 impl<K, Q: ?Sized, V> Index<&Q> for Map<K, V>
 where
