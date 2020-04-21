@@ -169,7 +169,7 @@ where
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let hash = hash_key(&key);
 
-        match self.find(&key, hash) {
+        match self.find(hash) {
             Hit(idx) => unsafe {
                 self.store.get_unchecked_mut(idx).value.replace(value)
             },
@@ -207,7 +207,7 @@ where
     {
         let hash = hash_key(key);
 
-        match self.find(key, hash) {
+        match self.find(hash) {
             Hit(idx) => {
                 let node = unsafe { self.store.get_unchecked(idx) };
 
@@ -241,7 +241,7 @@ where
     {
         let hash = hash_key(key);
 
-        match self.find(key, hash) {
+        match self.find(hash) {
             Hit(idx) => unsafe {
                 self.store.get_unchecked_mut(idx).value.as_mut()
             },
@@ -271,8 +271,8 @@ where
     {
         let hash = hash_key(key);
 
-        match self.find(key, hash) {
-            Hit(_) => true,
+        match self.find(hash) {
+            Hit(idx) => unsafe { self.store.get_unchecked(idx).value.is_some() },
             Miss(_) => false,
         }
     }
@@ -284,10 +284,9 @@ where
     where
         F: FnOnce() -> V,
     {
-        let key = key.into();
         let hash = hash_key(&key);
 
-        match self.find(&key, hash) {
+        match self.find(hash) {
             Hit(idx) => {
                 let node = unsafe { self.store.get_unchecked_mut(idx) };
 
@@ -334,7 +333,7 @@ where
     {
         let hash = hash_key(key);
 
-        match self.find(key, hash) {
+        match self.find(hash) {
             Hit(idx) => unsafe {
                 self.store.get_unchecked_mut(idx).value.take()
             },
@@ -361,11 +360,7 @@ where
     }
 
     #[inline]
-    fn find<Q: ?Sized>(&self, key: &Q, hash: u64) -> FindResult
-    where
-        K: Borrow<Q>,
-        Q: Eq,
-    {
+    fn find(&self, hash: u64) -> FindResult {
         if self.len() == 0 {
             return Miss(None);
         }
@@ -375,18 +370,18 @@ where
         loop {
             let node = unsafe { self.store.get_unchecked(idx) };
 
-            if hash == node.hash && key == node.key.borrow() {
-                return Hit(idx);
-            } else if hash < node.hash {
+            if hash < node.hash {
                 match node.left.get() {
                     Some(i) => idx = i.get() as usize,
                     None => return Miss(Some(&node.left)),
                 }
-            } else {
+            } else if hash > node.hash {
                 match node.right.get() {
                     Some(i) => idx = i.get() as usize,
                     None => return Miss(Some(&node.right)),
                 }
+            } else {
+                return Hit(idx);
             }
         }
     }
@@ -513,8 +508,8 @@ where
         }
 
         // Faster than .get() since we can avoid hashing
-        for &Node { ref key, ref value, hash, .. } in self.store.iter() {
-            if let Hit(idx) = other.find(key, hash) {
+        for &Node { ref value, hash, .. } in self.store.iter() {
+            if let Hit(idx) = other.find(hash) {
                 if &other.store[idx].value == value {
                     continue;
                 }
