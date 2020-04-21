@@ -168,7 +168,7 @@ where
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let hash = hash_key(&key);
 
-        match self.find(&key, hash) {
+        match self.find(hash) {
             Hit(idx) => unsafe {
                 let slot = &mut self.store.get_unchecked_mut(idx).value;
 
@@ -208,7 +208,7 @@ where
     {
         let hash = hash_key(key);
 
-        match self.find(key, hash) {
+        match self.find(hash) {
             Hit(idx) => Some(unsafe { &self.store.get_unchecked(idx).value }),
             Miss(_) => None,
         }
@@ -236,7 +236,7 @@ where
     {
         let hash = hash_key(key);
 
-        match self.find(key, hash) {
+        match self.find(hash) {
             Hit(_) => true,
             Miss(_) => false,
         }
@@ -266,7 +266,7 @@ where
     {
         let hash = hash_key(key);
 
-        match self.find(key, hash) {
+        match self.find(hash) {
             Hit(idx) => Some(unsafe { &mut self.store.get_unchecked_mut(idx).value }),
             Miss(_) => None,
         }
@@ -279,10 +279,9 @@ where
     where
         F: FnOnce() -> V,
     {
-        let key = key.into();
         let hash = hash_key(&key);
 
-        match self.find(&key, hash) {
+        match self.find(hash) {
             Hit(idx) => &mut self.store[idx].value,
             Miss(parent) => {
                 let idx = self.store.len();
@@ -321,7 +320,7 @@ where
     {
         let hash = hash_key(key);
 
-        let index = match self.find(key, hash) {
+        let index = match self.find(hash) {
             Hit(idx) => idx,
             Miss(_) => return None,
         };
@@ -339,7 +338,7 @@ where
                 removed = Some(value);
             } else {
                 // Faster than .insert() since we can avoid hashing
-                if let Miss(Some(parent)) = self.find(key.borrow(), hash) {
+                if let Miss(Some(parent)) = self.find(hash) {
                     parent.set(NonZeroU32::new(self.store.len() as u32));
                 }
 
@@ -369,11 +368,7 @@ where
     }
 
     #[inline]
-    fn find<Q: ?Sized>(&self, key: &Q, hash: u64) -> FindResult
-    where
-        K: Borrow<Q>,
-        Q: Eq,
-    {
+    fn find(&self, hash: u64) -> FindResult {
         if self.len() == 0 {
             return Miss(None);
         }
@@ -383,18 +378,18 @@ where
         loop {
             let node = unsafe { self.store.get_unchecked(idx) };
 
-            if hash == node.hash && key == node.key.borrow() {
-                return Hit(idx);
-            } else if hash < node.hash {
+            if hash < node.hash {
                 match node.left.get() {
                     Some(i) => idx = i.get() as usize,
                     None => return Miss(Some(&node.left)),
                 }
-            } else {
+            } else if hash > node.hash {
                 match node.right.get() {
                     Some(i) => idx = i.get() as usize,
                     None => return Miss(Some(&node.right)),
                 }
+            } else {
+                return Hit(idx);
             }
         }
     }
@@ -521,8 +516,8 @@ where
         }
 
         // Faster than .get() since we can avoid hashing
-        for &Node { ref key, ref value, hash, .. } in self.store.iter() {
-            if let Hit(idx) = other.find(key, hash) {
+        for &Node { ref value, hash, .. } in self.store.iter() {
+            if let Hit(idx) = other.find(hash) {
                 if &other.store[idx].value == value {
                     continue;
                 }
