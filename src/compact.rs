@@ -14,7 +14,7 @@ use core::fmt;
 use core::iter::FromIterator;
 use core::mem::ManuallyDrop;
 use core::ptr::{NonNull, slice_from_raw_parts_mut, slice_from_raw_parts};
-use core::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut, Index, IndexMut};
 
 /// A contiguous growable array type, written `Vec<T>` but pronounced 'vector'.
 pub struct Vec<T> {
@@ -170,6 +170,22 @@ impl<T> Vec<T> {
         Vec {
             ptr: unsafe { NonNull::new_unchecked(ptr) },
         }
+    }
+}
+
+impl<T> Index<usize> for Vec<T> {
+    type Output = T;
+
+    #[inline]
+    fn index(&self, index: usize) -> &T {
+        &self.deref()[index]
+    }
+}
+
+impl<T> IndexMut<usize> for Vec<T> {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut T {
+        &mut self.deref_mut()[index]
     }
 }
 

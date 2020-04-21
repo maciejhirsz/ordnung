@@ -10,6 +10,7 @@
 //! + Tree traversal is always breadth-first and happens over a single
 //!   continuous block of memory, which makes it cache friendly.
 //! + Iterating over all entries is always `O(n)`, same as `Vec<(K, V)>`.
+//! + Removing a value uses a sentinel and is `~O(log n)`.
 //! + There are no buckets, so there is no need to re-bucket things when growing
 //!   the map.
 //!
@@ -20,12 +21,11 @@
 //! + Your average map has fewer than 100 entries.
 //! + You have no a priori knowledge about the final size of the map when you
 //!   start creating it.
-//! + Removing items from the map is very, very rare.
 #![warn(missing_docs)]
 #![cfg_attr(not(test), no_std)]
 extern crate alloc;
 
-use core::{mem, slice, fmt};
+use core::{slice, fmt};
 use core::borrow::Borrow;
 use core::num::NonZeroU32;
 use core::iter::FromIterator;

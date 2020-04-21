@@ -10,6 +10,7 @@ Fast, vector-based map implementation that preserves insertion order.
 + Tree traversal is always breadth-first and happens over a single
   continuous block of memory, which makes it cache friendly.
 + Iterating over all entries is always `O(n)`, same as `Vec<(K, V)>`.
++ Removing a value uses a sentinel and is `~O(log n)`.
 + There are no buckets, so there is no need to re-bucket things when growing
   the map.
 
@@ -20,11 +21,11 @@ Fast, vector-based map implementation that preserves insertion order.
 + Your average map has fewer than 100 entries.
 + You have no a priori knowledge about the final size of the map when you
   start creating it.
-+ Removing items from the map is very, very rare.
 
 ## Benchmarks
 
 + All charts show time in ns, **smaller is better**.
++ All blue bars are std `HashMap` (SwissTable) with different hashing algorithms.
 + All benchmarks were compiled with `-C target-cpu=native` to take advantage of [`aHash`](https://github.com/tkaitchuck/ahash).
 
 ### Map construction
