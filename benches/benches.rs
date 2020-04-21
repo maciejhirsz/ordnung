@@ -5,9 +5,11 @@ extern crate test;
 use test::{Bencher, black_box};
 use ordnung::Map;
 use std::collections::HashMap;
-use ahash::AHashMap;
+// use ahash::AHashMap;
 use rustc_hash::FxHashMap;
 use fnv::FnvHashMap;
+
+type AHashMap<K, V> = HashMap<K, V, ahash::RandomState>;
 
 // Bunch of keys taken from twitter JSON benchmark
 static KEYS: &[&str] = &[
@@ -103,8 +105,8 @@ macro_rules! bench_all {
             b.iter(|| {
                 let mut map = Map::new();
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -114,10 +116,10 @@ macro_rules! bench_all {
         #[bench]
         fn create_ahash_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: AHashMap<&str, usize> = AHashMap::default();
+                let mut map: AHashMap<&str, &str> = AHashMap::default();
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -129,8 +131,8 @@ macro_rules! bench_all {
             b.iter(|| {
                 let mut map = FnvHashMap::default();
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -142,8 +144,8 @@ macro_rules! bench_all {
             b.iter(|| {
                 let mut map = FxHashMap::default();
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -155,8 +157,8 @@ macro_rules! bench_all {
             b.iter(|| {
                 let mut map = HashMap::new();
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -169,8 +171,8 @@ macro_rules! bench_all {
             b.iter(|| {
                 let mut map = Map::with_capacity($cap);
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -180,11 +182,11 @@ macro_rules! bench_all {
         #[bench]
         fn prealloc_create_ahash_hashmap(b: &mut Bencher) {
             b.iter(|| {
-                let mut map: AHashMap<&str, usize> = AHashMap::default();
+                let mut map: AHashMap<&str, &str> = AHashMap::default();
                 map.reserve($cap);
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -197,8 +199,8 @@ macro_rules! bench_all {
                 let mut map = FnvHashMap::default();
                 map.reserve($cap);
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -211,8 +213,8 @@ macro_rules! bench_all {
                 let mut map = FxHashMap::default();
                 map.reserve($cap);
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -224,8 +226,8 @@ macro_rules! bench_all {
             b.iter(|| {
                 let mut map = HashMap::with_capacity($cap);
 
-                for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                    map.insert(key, value);
+                for key in KEYS[..$cap].iter().copied() {
+                    map.insert(key, key);
                 }
 
                 black_box(map);
@@ -239,8 +241,8 @@ macro_rules! bench_all {
         fn x_index__ordnung(b: &mut Bencher) {
             let mut map = Map::new();
 
-            for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                map.insert(key, value);
+            for key in KEYS[..$cap].iter().copied() {
+                map.insert(key, key);
             }
 
             b.iter(|| {
@@ -252,10 +254,10 @@ macro_rules! bench_all {
 
         #[bench]
         fn x_index_ahash_hashmap(b: &mut Bencher) {
-            let mut map: AHashMap<&str, usize> = AHashMap::default();
+            let mut map: AHashMap<&str, &str> = AHashMap::default();
 
-            for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                map.insert(key, value);
+            for key in KEYS[..$cap].iter().copied() {
+                map.insert(key, key);
             }
 
             b.iter(|| {
@@ -269,8 +271,8 @@ macro_rules! bench_all {
         fn x_index_fnv_hashmap(b: &mut Bencher) {
             let mut map = FnvHashMap::default();
 
-            for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                map.insert(key, value);
+            for key in KEYS[..$cap].iter().copied() {
+                map.insert(key, key);
             }
 
             b.iter(|| {
@@ -284,8 +286,8 @@ macro_rules! bench_all {
         fn x_index_rustc_hashmap(b: &mut Bencher) {
             let mut map = FxHashMap::default();
 
-            for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                map.insert(key, value);
+            for key in KEYS[..$cap].iter().copied() {
+                map.insert(key, key);
             }
 
             b.iter(|| {
@@ -299,8 +301,8 @@ macro_rules! bench_all {
         fn x_index_std_hashmap(b: &mut Bencher) {
             let mut map = HashMap::new();
 
-            for (value, key) in KEYS[..$cap].iter().copied().enumerate() {
-                map.insert(key, value);
+            for key in KEYS[..$cap].iter().copied() {
+                map.insert(key, key);
             }
 
             b.iter(|| {
