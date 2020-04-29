@@ -32,8 +32,11 @@ use core::iter::FromIterator;
 use core::cell::Cell;
 use core::hash::{Hash, Hasher};
 use core::ops::Index;
+use core::marker::PhantomData;
 
 pub mod compact;
+
+use ahash::AHasher;
 
 pub use compact::Vec;
 // use alloc::vec::Vec;
@@ -71,17 +74,6 @@ impl<'a, K, V> Iterator for Values<'a, K, V> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.inner.size_hint()
     }
-}
-
-#[inline]
-fn hash_key<H: Hash>(hash: H) -> u64 {
-    // let mut hasher = fnv::FnvHasher::default();
-    // let mut hasher = rustc_hash::FxHasher::default();
-    let mut hasher = ahash::AHasher::default();
-
-    hash.hash(&mut hasher);
-
-    hasher.finish()
 }
 
 #[derive(Clone)]
@@ -149,8 +141,9 @@ unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 /// have to interact with instances of `Object`, much more likely you will be
 /// using the `JsonValue::Object` variant, which wraps around this struct.
 #[derive(Debug, Clone)]
-pub struct Map<K, V> {
-    store: Vec<Node<K, V>>
+pub struct Map<K, V, H = AHasher> {
+    store: Vec<Node<K, V>>,
+    hasher: PhantomData<H>,
 }
 
 enum FindResult<'find> {
@@ -160,36 +153,49 @@ enum FindResult<'find> {
 
 use FindResult::*;
 
-impl<K, V> Map<K, V>
-where
-    K: Hash + Eq,
-{
-    /// An iterator visiting all keys in arbitrary order.
-    /// The iterator element type is `&'a K`.
-    pub fn keys(&self) -> Keys<'_, K, V> {
-        Keys { inner: self.iter() }
-    }
-    
-    /// An iterator visiting all values in arbitrary order.
-    /// The iterator element type is `&'a V`.
-    pub fn values(&self) -> Values<'_, K, V> {
-        Values { inner: self.iter() }
-    }
-
+impl<K, V> Map<K, V, AHasher> {
     /// Create a new `Map`.
     #[inline]
     pub fn new() -> Self {
-        Map {
-            store: Vec::new()
-        }
+        Map::<K, V, AHasher>::default()
     }
 
     /// Create a `Map` with a given capacity
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Map {
-            store: Vec::with_capacity(capacity)
+            store: Vec::with_capacity(capacity),
+            hasher: PhantomData,
         }
+    }
+}
+
+impl<K, V, H> Default for Map<K, V, H> {
+    /// Create a new `Map` with a custom hasher.
+    #[inline]
+    fn default() -> Self {
+        Map {
+            store: Vec::new(),
+            hasher: PhantomData,
+        }
+    }
+}
+
+impl<K, V, H> Map<K, V, H>
+where
+    K: Hash + Eq,
+    H: Hasher + Default,
+{
+    /// An iterator visiting all keys in arbitrary order.
+    /// The iterator element type is `&'a K`.
+    pub fn keys(&self) -> Keys<'_, K, V> {
+        Keys { inner: self.iter() }
+    }
+
+    /// An iterator visiting all values in arbitrary order.
+    /// The iterator element type is `&'a V`.
+    pub fn values(&self) -> Values<'_, K, V> {
+        Values { inner: self.iter() }
     }
 
     /// Inserts a key-value pair into the map.
@@ -214,7 +220,7 @@ where
     /// assert_eq!(map[&37], "c");
     /// ```
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        let hash = hash_key(&key);
+        let hash = Self::hash_key(&key);
 
         match self.find(hash) {
             Hit(idx) => unsafe {
@@ -252,7 +258,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => {
@@ -286,7 +292,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => unsafe {
@@ -316,7 +322,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => unsafe { self.store.get_unchecked(idx).value.is_some() },
@@ -331,7 +337,7 @@ where
     where
         F: FnOnce() -> V,
     {
-        let hash = hash_key(&key);
+        let hash = Self::hash_key(&key);
 
         match self.find(hash) {
             Hit(idx) => {
@@ -378,7 +384,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => unsafe {
@@ -431,6 +437,17 @@ where
                 return Hit(idx);
             }
         }
+    }
+
+    #[inline]
+    fn hash_key<Q: Hash>(key: Q) -> u64 {
+        // let mut hasher = fnv::FnvHasher::default();
+        // let mut hasher = rustc_hash::FxHasher::default();
+        let mut hasher = H::default();
+
+        key.hash(&mut hasher);
+
+        hasher.finish()
     }
 
     /// An iterator visiting all key-value pairs in insertion order.
@@ -534,7 +551,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
             if let Some(n) = self.0.store.pop() {
                 if let Some(v) = n.value {
                     return Some((n.key, v))
-                } 
+                }
             } else {
                 return None
             }
