@@ -148,8 +148,8 @@ unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 /// A `HashSet`-like type that preserves insertion order - this means O(n) iteration
 /// by insertion order and O(log(n)) lookup by key.
 #[derive(Debug, Clone)]
-pub struct Set<T> {
-    map: Map<T, ()>,
+pub struct Set<T, H = AHasher> {
+    map: Map<T, (), H>,
 }
 
 impl<T> Set<T> {
@@ -159,6 +159,16 @@ impl<T> Set<T> {
         Self { map: Map::new() }
     }
 
+    /// Create a new `Set` with a given capacity
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            map: Map::with_capacity(capacity),
+        }
+    }
+}
+
+impl<T, H> Set<T, H> {
     /// Returns the number of elements in the set.
     #[inline]
     pub fn len(&self) -> usize {
@@ -168,14 +178,6 @@ impl<T> Set<T> {
     /// Returns `true` if the map contains no elements.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
-    }
-
-    /// Create a new `Set` with a given capacity
-    #[inline]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            map: Map::with_capacity(capacity),
-        }
     }
 
     /// An iterator visiting all elements in insertion order.
@@ -209,9 +211,10 @@ impl<T> Set<T> {
     }
 }
 
-impl<T> Set<T>
+impl<T, H> Set<T, H>
 where
     T: Hash + Eq,
+    H: Hasher + Default,
 {
     /// Add a value to the set.
     ///
