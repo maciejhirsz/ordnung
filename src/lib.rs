@@ -29,9 +29,9 @@ use core::borrow::Borrow;
 use core::cell::Cell;
 use core::hash::{Hash, Hasher};
 use core::iter::FromIterator;
+use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use core::ops::Index;
-use core::marker::PhantomData;
 use core::{fmt, slice};
 
 pub mod compact;
