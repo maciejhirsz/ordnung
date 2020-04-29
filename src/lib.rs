@@ -29,6 +29,7 @@ use core::borrow::Borrow;
 use core::cell::Cell;
 use core::hash::{Hash, Hasher};
 use core::iter::FromIterator;
+use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use core::ops::Index;
 use core::{fmt, slice};
@@ -36,6 +37,8 @@ use core::{fmt, slice};
 pub mod compact;
 mod entry;
 mod raw_entry;
+
+use ahash::AHasher;
 
 pub use compact::Vec;
 pub use entry::*;
@@ -75,17 +78,6 @@ impl<'a, K, V> Iterator for Values<'a, K, V> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.inner.size_hint()
     }
-}
-
-#[inline]
-fn hash_key<H: Hash>(hash: H) -> u64 {
-    // let mut hasher = fnv::FnvHasher::default();
-    // let mut hasher = rustc_hash::FxHasher::default();
-    let mut hasher = ahash::AHasher::default();
-
-    hash.hash(&mut hasher);
-
-    hasher.finish()
 }
 
 #[derive(Clone)]
@@ -154,8 +146,9 @@ unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 /// have to interact with instances of `Object`, much more likely you will be
 /// using the `JsonValue::Object` variant, which wraps around this struct.
 #[derive(Debug, Clone)]
-pub struct Map<K, V> {
+pub struct Map<K, V, H = AHasher> {
     store: Vec<Node<K, V>>,
+    hasher: PhantomData<H>,
 }
 
 enum FindResult<'find> {
@@ -165,9 +158,38 @@ enum FindResult<'find> {
 
 use FindResult::*;
 
-impl<K, V> Map<K, V>
+impl<K, V> Map<K, V, AHasher> {
+    /// Create a new `Map`.
+    #[inline]
+    pub fn new() -> Self {
+        Map::<K, V, AHasher>::default()
+    }
+
+    /// Create a `Map` with a given capacity
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Map {
+            store: Vec::with_capacity(capacity),
+            hasher: PhantomData,
+        }
+    }
+}
+
+impl<K, V, H> Default for Map<K, V, H> {
+    /// Create a new `Map` with a custom hasher.
+    #[inline]
+    fn default() -> Self {
+        Map {
+            store: Vec::new(),
+            hasher: PhantomData,
+        }
+    }
+}
+
+impl<K, V, H> Map<K, V, H>
 where
     K: Hash + Eq,
+    H: Hasher + Default,
 {
     /// An iterator visiting all keys in arbitrary order.
     /// The iterator element type is `&'a K`.
@@ -179,20 +201,6 @@ where
     /// The iterator element type is `&'a V`.
     pub fn values(&self) -> Values<'_, K, V> {
         Values { inner: self.iter() }
-    }
-
-    /// Create a new `Map`.
-    #[inline]
-    pub fn new() -> Self {
-        Map { store: Vec::new() }
-    }
-
-    /// Create a `Map` with a given capacity
-    #[inline]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Map {
-            store: Vec::with_capacity(capacity),
-        }
     }
 
     /// Inserts a key-value pair into the map.
@@ -217,7 +225,7 @@ where
     /// assert_eq!(map[&37], "c");
     /// ```
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        let hash = hash_key(&key);
+        let hash = Self::hash_key(&key);
 
         match self.find(hash) {
             Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.replace(value) },
@@ -253,7 +261,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => {
@@ -287,7 +295,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.as_mut() },
@@ -315,7 +323,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => unsafe { self.store.get_unchecked(idx).value.is_some() },
@@ -330,7 +338,7 @@ where
     where
         F: FnOnce() -> V,
     {
-        let hash = hash_key(&key);
+        let hash = Self::hash_key(&key);
 
         match self.find(hash) {
             Hit(idx) => {
@@ -377,7 +385,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let hash = hash_key(key);
+        let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.take() },
@@ -428,6 +436,17 @@ where
                 return Hit(idx);
             }
         }
+    }
+
+    #[inline]
+    fn hash_key<Q: Hash>(key: Q) -> u64 {
+        // let mut hasher = fnv::FnvHasher::default();
+        // let mut hasher = rustc_hash::FxHasher::default();
+        let mut hasher = H::default();
+
+        key.hash(&mut hasher);
+
+        hasher.finish()
     }
 
     /// An iterator visiting all key-value pairs in insertion order.
@@ -531,7 +550,7 @@ where
     /// acting erratically, with two keys randomly masking each other. Implementations
     /// are free to assume this doesn't happen (within the limits of memory-safety).
     #[inline]
-    pub fn raw_entry_mut(&mut self) -> RawEntryBuilderMut<'_, K, V> {
+    pub fn raw_entry_mut(&mut self) -> RawEntryBuilderMut<'_, K, V, H> {
         RawEntryBuilderMut { map: self }
     }
 
@@ -551,7 +570,7 @@ where
     ///
     /// Immutable raw entries have very limited use; you might instead want `raw_entry_mut`.
     #[inline]
-    pub fn raw_entry(&self) -> RawEntryBuilder<'_, K, V> {
+    pub fn raw_entry(&self) -> RawEntryBuilder<'_, K, V, H> {
         RawEntryBuilder { map: self }
     }
 
@@ -574,7 +593,7 @@ where
     /// assert_eq!(letters[&'u'], 1);
     /// assert_eq!(letters.get(&'y'), None);
     /// ```
-    pub fn entry(&mut self, key: K) -> Entry<K, V>
+    pub fn entry(&mut self, key: K) -> Entry<K, V, H>
     where
         K: Eq + Clone,
     {

@@ -3,7 +3,8 @@
 //! their copyright.
 
 use super::*;
-use core::hash::Hash;
+use core::hash::{Hash, Hasher};
+
 use core::mem;
 // use std::fmt::{self, Debug};
 
@@ -15,17 +16,18 @@ use core::mem;
 ///
 /// [`HashMap`]: struct.HashMap.html
 /// [`entry`]: struct.HashMap.html#method.entry
-pub enum Entry<'a, K, V> {
+pub enum Entry<'a, K, V, H> {
     /// An occupied entry.
-    Occupied(OccupiedEntry<'a, K, V>),
+    Occupied(OccupiedEntry<'a, K, V, H>),
 
     /// A vacant entry.
-    Vacant(VacantEntry<'a, K, V>),
+    Vacant(VacantEntry<'a, K, V, H>),
 }
 
-impl<'a, K, V> Entry<'a, K, V>
+impl<'a, K, V, H> Entry<'a, K, V, H>
 where
     K: Clone,
+    H: Hasher + Default,
 {
     /// Ensures a value is in the entry by inserting the default if empty, and returns
     /// a mutable reference to the value in the entry.
@@ -148,19 +150,19 @@ impl<K: fmt::Debug, V: fmt::Debug, S> fmt::Debug for Entry<'_, K, V, S> {
 /// It is part of the [`Entry`] enum.
 ///
 /// [`Entry`]: enum.Entry.html
-pub struct OccupiedEntry<'a, K, V> {
+pub struct OccupiedEntry<'a, K, V, H> {
     idx: usize,
     key: Option<K>,
-    map: &'a mut Map<K, V>,
+    map: &'a mut Map<K, V, H>,
 }
 
-unsafe impl<K, V> Send for OccupiedEntry<'_, K, V>
+unsafe impl<K, V, H> Send for OccupiedEntry<'_, K, V, H>
 where
     K: Send,
     V: Send,
 {
 }
-unsafe impl<K, V> Sync for OccupiedEntry<'_, K, V>
+unsafe impl<K, V, H> Sync for OccupiedEntry<'_, K, V, H>
 where
     K: Sync,
     V: Sync,
@@ -178,11 +180,11 @@ impl<K: Debug, V: Debug, S> Debug for OccupiedEntry<'_, K, V, S> {
 }
 */
 
-impl<'a, K, V> OccupiedEntry<'a, K, V>
+impl<'a, K, V, H> OccupiedEntry<'a, K, V, H>
 where
     K: Clone,
 {
-    pub(crate) fn new(idx: usize, key: K, map: &'a mut Map<K, V>) -> Self {
+    pub(crate) fn new(idx: usize, key: K, map: &'a mut Map<K, V, H>) -> Self {
         Self {
             idx,
             key: Some(key),
@@ -447,9 +449,9 @@ where
 /// It is part of the [`Entry`] enum.
 ///
 /// [`Entry`]: enum.Entry.html
-pub struct VacantEntry<'a, K, V> {
+pub struct VacantEntry<'a, K, V, H> {
     key: K,
-    map: &'a mut Map<K, V>,
+    map: &'a mut Map<K, V, H>,
 }
 
 /*
@@ -460,8 +462,11 @@ impl<K: Debug, V, S> Debug for VacantEntry<'_, K, V, S> {
 }
 */
 
-impl<'a, K, V> VacantEntry<'a, K, V> {
-    pub(crate) fn new(key: K, map: &'a mut Map<K, V>) -> Self {
+impl<'a, K, V, H> VacantEntry<'a, K, V, H>
+where
+    H: Hasher + Default,
+{
+    pub(crate) fn new(key: K, map: &'a mut Map<K, V, H>) -> Self {
         Self { key, map }
     }
     /// Gets a reference to the key that would be used when inserting a value
