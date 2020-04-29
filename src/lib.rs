@@ -25,14 +25,17 @@
 #![cfg_attr(not(test), no_std)]
 extern crate alloc;
 
-use core::borrow::Borrow;
-use core::cell::Cell;
-use core::hash::{Hash, Hasher};
-use core::iter::FromIterator;
-use core::marker::PhantomData;
-use core::num::NonZeroU32;
-use core::ops::Index;
-use core::{fmt, slice};
+use core::{
+    borrow::Borrow,
+    cell::Cell,
+    cmp::Ordering,
+    hash::{Hash, Hasher},
+    iter::FromIterator,
+    marker::PhantomData,
+    num::NonZeroU32,
+    ops::Index,
+    {fmt, slice},
+};
 
 pub mod compact;
 mod entry;
@@ -142,9 +145,226 @@ impl<K, V> Node<K, V> {
 // `&mut` access, ergo this is safe.
 unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 
-/// A binary tree implementation of a string -> `JsonValue` map. You normally don't
-/// have to interact with instances of `Object`, much more likely you will be
-/// using the `JsonValue::Object` variant, which wraps around this struct.
+/// A `HashSet`-like type that preserves insertion order - this means O(n) iteration
+/// by insertion order and O(log(n)) lookup by key.
+#[derive(Debug, Clone)]
+pub struct Set<T, H = AHasher> {
+    map: Map<T, (), H>,
+}
+
+impl<T> Set<T> {
+    /// Create a new `Set`
+    #[inline]
+    pub fn new() -> Self {
+        Self { map: Map::new() }
+    }
+
+    /// Create a new `Set` with a given capacity
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            map: Map::with_capacity(capacity),
+        }
+    }
+}
+
+impl<T, H> Set<T, H> {
+    /// Returns the number of elements in the set.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Returns `true` if the map contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// An iterator visiting all elements in insertion order.
+    /// The iterator element type is `&T`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Set;
+    ///
+    /// let mut map = Set::new();
+    /// map.insert("a");
+    /// map.insert("b");
+    /// map.insert("c");
+    ///
+    /// let entries: Vec<_> = map.iter().collect();
+    ///
+    /// assert_eq!(
+    ///     entries,
+    ///     &[
+    ///         &"a",
+    ///         &"b",
+    ///         &"c",
+    ///     ],
+    /// );
+    /// ```
+    pub fn iter(&self) -> SetIter<'_, T> {
+        SetIter {
+            inner: self.map.iter(),
+        }
+    }
+}
+
+impl<T, H> Set<T, H>
+where
+    T: Hash + Eq,
+    H: Hasher + Default,
+{
+    /// Add a value to the set.
+    ///
+    /// If the set did not have this value present, `true` is returned.
+    /// If the set did have this value present, `false` is returned.
+    #[inline]
+    pub fn insert(&mut self, val: T) -> bool {
+        self.map.insert(val, ()).is_some()
+    }
+
+    /// Returns a reference to the value in the set, if any.
+    #[inline]
+    pub fn get<Q: ?Sized>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.map.get_key_value(value).map(|(k, _)| k)
+    }
+
+    /// Returns `true` if the set contains this value
+    #[inline]
+    pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.map.contains_key(value)
+    }
+}
+
+// Because keys can inserted in different order, the safe way to
+// compare `Map`s is to iterate over one and check if the other
+// has all the same keys.
+impl<T> PartialEq for Set<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.map == other.map
+    }
+}
+
+impl<T> Eq for Set<T> where T: Eq {}
+
+// Because keys can inserted in different order, the safe way to
+// compare `Map`s is to iterate over one and check if the other
+// has all the same keys.
+impl<T> PartialOrd for Set<T>
+where
+    T: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.map.partial_cmp(&other.map)
+    }
+}
+
+impl<T> Ord for Set<T>
+where
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.map.cmp(&other.map)
+    }
+}
+
+impl<T> IntoIterator for Set<T> {
+    type Item = T;
+    type IntoIter = SetIntoIter<T>;
+
+    #[inline]
+    fn into_iter(self) -> SetIntoIter<T> {
+        SetIntoIter(self.map.into_iter())
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Set<T> {
+    type Item = &'a T;
+    type IntoIter = SetIter<'a, T>;
+
+    #[inline]
+    fn into_iter(self) -> SetIter<'a, T> {
+        self.iter()
+    }
+}
+
+/// Consuming iterator
+pub struct SetIntoIter<T>(IntoIter<T, ()>);
+impl<T> ExactSizeIterator for SetIntoIter<T> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<T> DoubleEndedIterator for SetIntoIter<T> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(|(k, ())| k)
+    }
+}
+
+impl<T> Iterator for SetIntoIter<T> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|(k, ())| k)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+/// An iterator over the entries of a `Set`.
+///
+/// This struct is created by the [`iter`](./struct.Set.html#method.iter)
+/// method on [`Set`](./struct.Set.html). See its documentation for more.
+pub struct SetIter<'a, T> {
+    inner: Iter<'a, T, ()>,
+}
+
+impl<'i, T> Iterator for SetIter<'i, T> {
+    type Item = &'i T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(k, ())| k)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len(), Some(self.len()))
+    }
+}
+
+impl<T> DoubleEndedIterator for SetIter<'_, T> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back().map(|(k, ())| k)
+    }
+}
+
+impl<T> ExactSizeIterator for SetIter<'_, T> {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+/// A `HashMap`-like type that preserves insertion order, implemented as a binary tree.
 #[derive(Debug, Clone)]
 pub struct Map<K, V, H = AHasher> {
     store: Vec<Node<K, V>>,
@@ -158,11 +378,11 @@ enum FindResult<'find> {
 
 use FindResult::*;
 
-impl<K, V> Map<K, V, AHasher> {
+impl<K, V> Map<K, V> {
     /// Create a new `Map`.
     #[inline]
     pub fn new() -> Self {
-        Map::<K, V, AHasher>::default()
+        Self::default()
     }
 
     /// Create a `Map` with a given capacity
@@ -171,6 +391,95 @@ impl<K, V> Map<K, V, AHasher> {
         Map {
             store: Vec::with_capacity(capacity),
             hasher: PhantomData,
+        }
+    }
+}
+
+impl<K, V, H> Map<K, V, H> {
+    /// Returns the number of elements in the map.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    /// Returns `true` if the map contains no elements.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.store.is_empty()
+    }
+
+    /// Clears the map, removing all key-value pairs. Keeps the allocated memory for reuse.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.store.clear();
+    }
+
+    /// An iterator visiting all key-value pairs in insertion order.
+    /// The iterator element type is `(&K, &V)`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// map.insert("c", 3);
+    ///
+    /// let entries: Vec<_> = map.iter().collect();
+    ///
+    /// assert_eq!(
+    ///     entries,
+    ///     &[
+    ///         (&"a", &1),
+    ///         (&"b", &2),
+    ///         (&"c", &3),
+    ///     ],
+    /// );
+    /// ```
+    #[inline]
+    pub fn iter(&self) -> Iter<K, V> {
+        Iter {
+            inner: self.store.iter(),
+        }
+    }
+
+    /// An iterator visiting all key-value pairs in insertion order, with
+    /// mutable references to the values. The iterator element type is
+    /// (&K, &mut V).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert("a", 1);
+    /// map.insert("b", 2);
+    /// map.insert("c", 3);
+    ///
+    /// // Update all values
+    /// for (_, val) in map.iter_mut() {
+    ///     *val *= 2;
+    /// }
+    ///
+    /// // Check if values are doubled
+    /// let entries: Vec<_> = map.iter().collect();
+    ///
+    /// assert_eq!(
+    ///     entries,
+    ///     &[
+    ///         (&"a", &2),
+    ///         (&"b", &4),
+    ///         (&"c", &6),
+    ///     ],
+    /// );
+    /// ```
+    #[inline]
+    pub fn iter_mut(&mut self) -> IterMut<K, V> {
+        IterMut {
+            inner: self.store.iter_mut(),
         }
     }
 }
@@ -261,13 +570,36 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
+        self.get_key_value(key).map(|(_, v)| v)
+    }
+
+    /// Returns a reference to the value corresponding to the key, along with the original key.
+    ///
+    /// The key may be any borrowed form of the map's key type, but `Hash` and
+    /// `Eq` on the borrowed form must match those for the key type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    ///
+    /// let mut map = Map::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.get(&1), Some(&"a"));
+    /// assert_eq!(map.get(&2), None);
+    /// ```
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         let hash = Self::hash_key(key);
 
         match self.find(hash) {
             Hit(idx) => {
                 let node = unsafe { self.store.get_unchecked(idx) };
 
-                node.value.as_ref()
+                node.value.as_ref().map(|v| (&node.key, v))
             }
             Miss(_) => None,
         }
@@ -393,24 +725,6 @@ where
         }
     }
 
-    /// Returns the number of elements in the map.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.store.len()
-    }
-
-    /// Returns `true` if the map contains no elements.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.store.is_empty()
-    }
-
-    /// Clears the map, removing all key-value pairs. Keeps the allocated memory for reuse.
-    #[inline]
-    pub fn clear(&mut self) {
-        self.store.clear();
-    }
-
     #[inline]
     fn find(&self, hash: u64) -> FindResult {
         if self.len() == 0 {
@@ -447,75 +761,6 @@ where
         key.hash(&mut hasher);
 
         hasher.finish()
-    }
-
-    /// An iterator visiting all key-value pairs in insertion order.
-    /// The iterator element type is `(&K, &V)`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use ordnung::Map;
-    ///
-    /// let mut map = Map::new();
-    /// map.insert("a", 1);
-    /// map.insert("b", 2);
-    /// map.insert("c", 3);
-    ///
-    /// let entries: Vec<_> = map.iter().collect();
-    ///
-    /// assert_eq!(
-    ///     entries,
-    ///     &[
-    ///         (&"a", &1),
-    ///         (&"b", &2),
-    ///         (&"c", &3),
-    ///     ],
-    /// );
-    /// ```
-    #[inline]
-    pub fn iter(&self) -> Iter<K, V> {
-        Iter {
-            inner: self.store.iter(),
-        }
-    }
-
-    /// An iterator visiting all key-value pairs in insertion order, with
-    /// mutable references to the values. The iterator element type is
-    /// (&K, &mut V).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use ordnung::Map;
-    ///
-    /// let mut map = Map::new();
-    /// map.insert("a", 1);
-    /// map.insert("b", 2);
-    /// map.insert("c", 3);
-    ///
-    /// // Update all values
-    /// for (_, val) in map.iter_mut() {
-    ///     *val *= 2;
-    /// }
-    ///
-    /// // Check if values are doubled
-    /// let entries: Vec<_> = map.iter().collect();
-    ///
-    /// assert_eq!(
-    ///     entries,
-    ///     &[
-    ///         (&"a", &2),
-    ///         (&"b", &4),
-    ///         (&"c", &6),
-    ///     ],
-    /// );
-    /// ```
-    #[inline]
-    pub fn iter_mut(&mut self) -> IterMut<K, V> {
-        IterMut {
-            inner: self.store.iter_mut(),
-        }
     }
 
     /// Creates a raw entry builder for the HashMap.
@@ -612,20 +857,31 @@ impl<K, V> IntoIterator for Map<K, V> {
 
     #[inline]
     fn into_iter(self) -> IntoIter<K, V> {
-        IntoIter(self)
+        IntoIter(self.store.into_iter())
     }
 }
 
 /// Consuming iterator
-pub struct IntoIter<K, V>(Map<K, V>);
-impl<K, V> IntoIter<K, V> {
-    /// The length of this iterator
-    pub fn len(&self) -> usize {
-        self.0.store.len()
+pub struct IntoIter<K, V>(<Vec<Node<K, V>> as IntoIterator>::IntoIter);
+
+impl<K, V> ExactSizeIterator for IntoIter<K, V> {
+    fn len(&self) -> usize {
+        self.0.len()
     }
-    /// If this iteratoris empty
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+}
+
+impl<K, V> DoubleEndedIterator for IntoIter<K, V> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(n) = self.0.next_back() {
+                if let Some(v) = n.value {
+                    return Some((n.key, v));
+                }
+            } else {
+                return None;
+            }
+        }
     }
 }
 
@@ -634,7 +890,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(n) = self.0.store.pop() {
+            if let Some(n) = self.0.next() {
                 if let Some(v) = n.value {
                     return Some((n.key, v));
                 }
@@ -645,8 +901,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
     }
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let l = self.0.store.len();
-        (l, Some(l))
+        self.0.size_hint()
     }
 }
 
@@ -693,7 +948,7 @@ where
 // has all the same keys.
 impl<K, V> PartialEq for Map<K, V>
 where
-    K: Hash + Eq,
+    K: PartialEq,
     V: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -701,21 +956,57 @@ where
             return false;
         }
 
-        // Faster than .get() since we can avoid hashing
-        for &Node {
-            ref value, hash, ..
-        } in self.store.iter()
-        {
-            if let Hit(idx) = other.find(hash) {
-                if &other.store[idx].value == value {
-                    continue;
-                }
+        for (a, b) in self.iter().zip(other.iter()) {
+            if a != b {
+                return false;
             }
-
-            return false;
         }
 
-        true
+        return true;
+    }
+}
+
+impl<K, V> Eq for Map<K, V>
+where
+    K: Eq,
+    V: Eq,
+{
+}
+
+// Because keys can inserted in different order, the safe way to
+// compare `Map`s is to iterate over one and check if the other
+// has all the same keys.
+impl<K, V> PartialOrd for Map<K, V>
+where
+    K: PartialOrd,
+    V: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        for (a, b) in self.iter().zip(other.iter()) {
+            match a.partial_cmp(&b) {
+                Some(Ordering::Equal) => {}
+                other => return other,
+            }
+        }
+
+        return self.len().partial_cmp(&other.len());
+    }
+}
+
+impl<K, V> Ord for Map<K, V>
+where
+    K: Ord,
+    V: Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        for (a, b) in self.iter().zip(other.iter()) {
+            match a.cmp(&b) {
+                Ordering::Equal => {}
+                other => return other,
+            }
+        }
+
+        return self.len().cmp(&other.len());
     }
 }
 
@@ -833,25 +1124,110 @@ impl<K, V> ExactSizeIterator for IterMut<'_, K, V> {
 
 #[cfg(test)]
 mod tests {
-    use super::Map;
+    mod map {
+        use crate::Map;
 
-    #[test]
-    fn empty() {
-        let map: Map<&str, u64> = Map::new();
+        #[test]
+        fn empty() {
+            let map: Map<&str, u64> = Map::new();
 
-        assert_eq!(map.get("foo"), None);
-        assert_eq!(map.len(), 0);
-        assert_eq!(map.is_empty(), true);
+            assert_eq!(map.get("foo"), None);
+            assert_eq!(map.len(), 0);
+            assert_eq!(map.is_empty(), true);
+        }
+
+        #[test]
+        fn simple() {
+            let mut map: Map<&str, u64> = Map::new();
+
+            map.insert("foo", 42);
+
+            assert_eq!(map.get("foo"), Some(&42));
+            assert_eq!(map.len(), 1);
+            assert_eq!(map.is_empty(), false);
+        }
+
+        #[test]
+        fn iter() {
+            let mut map: Map<&str, u64> = Map::new();
+
+            let elements = [("foo", 0123), ("bar", 1234), ("baz", 2345), ("qux", 3456)];
+
+            for &(k, v) in &elements {
+                assert!(map.insert(k, v).is_none());
+            }
+
+            assert_eq!(map.iter().len(), elements.len());
+            assert_eq!(map.clone().into_iter().len(), elements.len());
+
+            assert_eq!(
+                &map.iter().map(|(&k, &v)| (k, v)).collect::<Vec<_>>(),
+                &elements
+            );
+            assert_eq!(&map.clone().into_iter().collect::<Vec<_>>(), &elements);
+
+            let reversed_elements = elements.iter().cloned().rev().collect::<Vec<_>>();
+
+            assert_eq!(
+                &map.iter().rev().map(|(&k, &v)| (k, v)).collect::<Vec<_>>(),
+                &reversed_elements
+            );
+            assert_eq!(
+                &map.clone().into_iter().rev().collect::<Vec<_>>(),
+                &reversed_elements
+            );
+        }
     }
 
-    #[test]
-    fn simple() {
-        let mut map: Map<&str, u64> = Map::new();
+    mod set {
+        use crate::Set;
 
-        map.insert("foo", 42);
+        #[test]
+        fn empty() {
+            let map: Set<&str> = Set::new();
 
-        assert_eq!(map.get("foo"), Some(&42));
-        assert_eq!(map.len(), 1);
-        assert_eq!(map.is_empty(), false);
+            assert_eq!(map.get("foo"), None);
+            assert_eq!(map.len(), 0);
+            assert_eq!(map.is_empty(), true);
+        }
+
+        #[test]
+        fn simple() {
+            let mut map: Set<&str> = Set::new();
+
+            map.insert("foo");
+
+            assert_eq!(map.get("foo"), Some(&"foo"));
+            assert_eq!(map.len(), 1);
+            assert_eq!(map.is_empty(), false);
+        }
+
+        #[test]
+        fn iter() {
+            let mut map: Set<&str> = Set::new();
+
+            let elements = ["foo", "bar", "baz", "qux"];
+
+            for &v in &elements {
+                assert!(!map.insert(v));
+            }
+
+            assert_eq!(map.iter().len(), elements.len());
+            assert_eq!(map.clone().into_iter().len(), elements.len());
+
+            assert_eq!(&map.iter().cloned().collect::<Vec<_>>(), &elements);
+            assert_eq!(&map.clone().into_iter().collect::<Vec<_>>(), &elements);
+
+            let reversed_elements = elements.iter().cloned().rev().collect::<Vec<_>>();
+
+            assert_eq!(
+                &map.iter().cloned().rev().collect::<Vec<_>>(),
+                &reversed_elements
+            );
+            assert_eq!(
+                &map.clone().into_iter().rev().collect::<Vec<_>>(),
+                &reversed_elements
+            );
+        }
     }
 }
