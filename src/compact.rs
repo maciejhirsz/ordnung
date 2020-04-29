@@ -9,12 +9,12 @@
 //! assert_eq!(size_of::<Vec<u8>>(), WORD * 3);
 //! assert_eq!(size_of::<ordnung::compact::Vec<u8>>(), WORD * 2);
 //! ```
-use alloc::vec::{Vec as StdVec, IntoIter};
+use alloc::vec::{IntoIter, Vec as StdVec};
 use core::fmt;
 use core::iter::FromIterator;
 use core::mem::ManuallyDrop;
-use core::ptr::{NonNull, slice_from_raw_parts_mut, slice_from_raw_parts};
 use core::ops::{Deref, DerefMut, Index, IndexMut};
+use core::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut, NonNull};
 
 /// A contiguous growable array type, written `Vec<T>` but pronounced 'vector'.
 pub struct Vec<T> {
@@ -68,22 +68,19 @@ impl<T> Vec<T> {
 
             self.ptr = unsafe { pack_unchecked(stdvec.as_mut_ptr(), len, stdvec.capacity()) }
         }
-        unsafe { 
+        unsafe {
             self.as_mut_ptr().add(len).write(val);
             self.set_len(len + 1);
         }
-        
     }
 
     /// Removes the last element from a vector and returns it, or `None` if it is empty.
     pub fn pop(&mut self) -> Option<T> {
         let len = self.len().checked_sub(1)?;
 
-        unsafe{ self.set_len(len) };
+        unsafe { self.set_len(len) };
 
-        Some(unsafe {
-            self.as_mut_ptr().add(len).read()
-        })
+        Some(unsafe { self.as_mut_ptr().add(len).read() })
     }
 
     /// Clears the vector, removing all values.
@@ -129,13 +126,7 @@ impl<T> Vec<T> {
     pub unsafe fn set_len(&mut self, len: usize) {
         let (_, cap) = self.parts();
 
-        self.ptr = unsafe {
-            pack_unchecked(
-                self.as_mut_ptr(),
-                len,
-                cap,
-            )
-        };
+        self.ptr = pack_unchecked(self.as_mut_ptr(), len, cap);
     }
 
     #[inline]
@@ -148,13 +139,14 @@ impl<T> Vec<T> {
     fn with<'a, R: 'a, F: FnOnce(&mut StdVec<T>) -> R>(&mut self, f: F) -> R {
         let (len, cap) = self.parts();
 
-        let mut stdvec = unsafe {
-            StdVec::from_raw_parts(self.as_mut_ptr(), len, cap)
-        };
+        let mut stdvec = unsafe { StdVec::from_raw_parts(self.as_mut_ptr(), len, cap) };
 
         let r = f(&mut stdvec);
 
-        ManuallyDrop::new(core::mem::replace(self, Self::from_stdvec_unchecked(stdvec)));
+        ManuallyDrop::new(core::mem::replace(
+            self,
+            Self::from_stdvec_unchecked(stdvec),
+        ));
 
         r
     }
@@ -166,10 +158,7 @@ impl<T> Vec<T> {
         let len = stdvec.len();
         let cap = stdvec.capacity();
 
-        let ptr = slice_from_raw_parts_mut(
-            ptr,
-            len & MASK_LO | (cap & MASK_LO) << 32,
-        );
+        let ptr = slice_from_raw_parts_mut(ptr, len & MASK_LO | (cap & MASK_LO) << 32);
 
         Vec {
             ptr: unsafe { NonNull::new_unchecked(ptr) },
@@ -223,9 +212,7 @@ impl<T> From<Vec<T>> for StdVec<T> {
         let ptr = vec.as_mut_ptr();
         let (len, cap) = vec.parts();
 
-        unsafe {
-            StdVec::from_raw_parts(ptr, len, cap)
-        }
+        unsafe { StdVec::from_raw_parts(ptr, len, cap) }
     }
 }
 
@@ -242,9 +229,7 @@ impl<T> Deref for Vec<T> {
     fn deref(&self) -> &[T] {
         let (len, _) = self.parts();
 
-        unsafe {
-            &*slice_from_raw_parts(self.as_ptr() as *mut T, len)
-        }
+        unsafe { &*slice_from_raw_parts(self.as_ptr() as *mut T, len) }
     }
 }
 
@@ -253,9 +238,7 @@ impl<T> DerefMut for Vec<T> {
     fn deref_mut(&mut self) -> &mut [T] {
         let (len, _) = self.parts();
 
-        unsafe {
-            &mut *slice_from_raw_parts_mut(self.as_mut_ptr() as *mut T, len)
-        }
+        unsafe { &mut *slice_from_raw_parts_mut(self.as_mut_ptr() as *mut T, len) }
     }
 }
 
@@ -283,7 +266,10 @@ impl<T> FromIterator<T> for Vec<T> {
     }
 }
 
-impl<T1, T2> PartialEq<Vec<T2>> for Vec<T1> where T1: PartialEq<T2> {
+impl<T1, T2> PartialEq<Vec<T2>> for Vec<T1>
+where
+    T1: PartialEq<T2>,
+{
     fn eq(&self, other: &Vec<T2>) -> bool {
         self.deref() == other.deref()
     }
@@ -292,10 +278,8 @@ impl<T1, T2> PartialEq<Vec<T2>> for Vec<T1> where T1: PartialEq<T2> {
 unsafe impl<T: Sync> Sync for Vec<T> {}
 unsafe impl<T: Send> Send for Vec<T> {}
 
-
 const MASK_LO: usize = core::u32::MAX as usize;
 const MASK_HI: usize = !(core::u32::MAX as usize);
-
 
 #[inline]
 unsafe fn pack<T>(ptr: *mut T, len: usize, capacity: usize) -> NonNull<[T]> {
@@ -306,13 +290,10 @@ unsafe fn pack<T>(ptr: *mut T, len: usize, capacity: usize) -> NonNull<[T]> {
     pack_unchecked(ptr, len, capacity)
 }
 
-
 #[inline]
 unsafe fn pack_unchecked<T>(ptr: *mut T, len: usize, capacity: usize) -> NonNull<[T]> {
-    NonNull::new_unchecked(
-        slice_from_raw_parts_mut(
-            ptr as *mut T,
-            (len & MASK_LO) | ((capacity & MASK_LO) << 32)
-        )
-    )
+    NonNull::new_unchecked(slice_from_raw_parts_mut(
+        ptr as *mut T,
+        (len & MASK_LO) | ((capacity & MASK_LO) << 32),
+    ))
 }

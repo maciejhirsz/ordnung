@@ -2,12 +2,12 @@
 
 extern crate test;
 
-use test::{Bencher, black_box};
 use ordnung::Map;
 use std::collections::HashMap;
+use test::{black_box, Bencher};
 // use ahash::AHashMap;
-use rustc_hash::FxHashMap;
 use fnv::FnvHashMap;
+use rustc_hash::FxHashMap;
 
 type AHashMap<K, V> = HashMap<K, V, ahash::RandomState>;
 
@@ -314,8 +314,18 @@ macro_rules! bench_all {
     };
 }
 
-mod bench80 { bench_all!(80); }
-mod bench40 { bench_all!(40); }
-mod bench20 { bench_all!(20); }
-mod bench10 { bench_all!(10); }
-mod bench05 { bench_all!(5); }
+mod bench80 {
+    bench_all!(80);
+}
+mod bench40 {
+    bench_all!(40);
+}
+mod bench20 {
+    bench_all!(20);
+}
+mod bench10 {
+    bench_all!(10);
+}
+mod bench05 {
+    bench_all!(5);
+}

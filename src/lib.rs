@@ -25,17 +25,21 @@
 #![cfg_attr(not(test), no_std)]
 extern crate alloc;
 
-use core::{slice, fmt};
 use core::borrow::Borrow;
-use core::num::NonZeroU32;
-use core::iter::FromIterator;
 use core::cell::Cell;
 use core::hash::{Hash, Hasher};
+use core::iter::FromIterator;
+use core::num::NonZeroU32;
 use core::ops::Index;
+use core::{fmt, slice};
 
 pub mod compact;
+mod entry;
+mod raw_entry;
 
 pub use compact::Vec;
+pub use entry::*;
+pub use raw_entry::*;
 // use alloc::vec::Vec;
 
 /// Iterator over the keys
@@ -112,7 +116,10 @@ where
     V: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&(&self.key, &self.value, self.left.get(), self.right.get()), f)
+        fmt::Debug::fmt(
+            &(&self.key, &self.value, self.left.get(), self.right.get()),
+            f,
+        )
     }
 }
 
@@ -122,9 +129,7 @@ where
     V: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash &&
-        self.key == other.key &&
-        self.value == other.value
+        self.hash == other.hash && self.key == other.key && self.value == other.value
     }
 }
 
@@ -150,7 +155,7 @@ unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 /// using the `JsonValue::Object` variant, which wraps around this struct.
 #[derive(Debug, Clone)]
 pub struct Map<K, V> {
-    store: Vec<Node<K, V>>
+    store: Vec<Node<K, V>>,
 }
 
 enum FindResult<'find> {
@@ -169,7 +174,7 @@ where
     pub fn keys(&self) -> Keys<'_, K, V> {
         Keys { inner: self.iter() }
     }
-    
+
     /// An iterator visiting all values in arbitrary order.
     /// The iterator element type is `&'a V`.
     pub fn values(&self) -> Values<'_, K, V> {
@@ -179,16 +184,14 @@ where
     /// Create a new `Map`.
     #[inline]
     pub fn new() -> Self {
-        Map {
-            store: Vec::new()
-        }
+        Map { store: Vec::new() }
     }
 
     /// Create a `Map` with a given capacity
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Map {
-            store: Vec::with_capacity(capacity)
+            store: Vec::with_capacity(capacity),
         }
     }
 
@@ -217,9 +220,7 @@ where
         let hash = hash_key(&key);
 
         match self.find(hash) {
-            Hit(idx) => unsafe {
-                self.store.get_unchecked_mut(idx).value.replace(value)
-            },
+            Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.replace(value) },
             Miss(parent) => {
                 if let Some(parent) = parent {
                     parent.set(NonZeroU32::new(self.store.len() as u32));
@@ -228,7 +229,7 @@ where
                 self.store.push(Node::new(key, value, hash));
 
                 None
-            },
+            }
         }
     }
 
@@ -259,7 +260,7 @@ where
                 let node = unsafe { self.store.get_unchecked(idx) };
 
                 node.value.as_ref()
-            },
+            }
             Miss(_) => None,
         }
     }
@@ -289,9 +290,7 @@ where
         let hash = hash_key(key);
 
         match self.find(hash) {
-            Hit(idx) => unsafe {
-                self.store.get_unchecked_mut(idx).value.as_mut()
-            },
+            Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.as_mut() },
             Miss(_) => None,
         }
     }
@@ -342,7 +341,7 @@ where
                 }
 
                 node.value.as_mut().unwrap()
-            },
+            }
             Miss(parent) => {
                 let idx = self.store.len();
 
@@ -353,7 +352,7 @@ where
                 self.store.push(Node::new(key, fill(), hash));
 
                 self.store[idx].value.as_mut().unwrap()
-            },
+            }
         }
     }
 
@@ -381,9 +380,7 @@ where
         let hash = hash_key(key);
 
         match self.find(hash) {
-            Hit(idx) => unsafe {
-                self.store.get_unchecked_mut(idx).value.take()
-            },
+            Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.take() },
             Miss(_) => return None,
         }
     }
@@ -460,7 +457,7 @@ where
     #[inline]
     pub fn iter(&self) -> Iter<K, V> {
         Iter {
-            inner: self.store.iter()
+            inner: self.store.iter(),
         }
     }
 
@@ -498,8 +495,95 @@ where
     #[inline]
     pub fn iter_mut(&mut self) -> IterMut<K, V> {
         IterMut {
-            inner: self.store.iter_mut()
+            inner: self.store.iter_mut(),
         }
+    }
+
+    /// Creates a raw entry builder for the HashMap.
+    ///
+    /// Raw entries provide the lowest level of control for searching and
+    /// manipulating a map. They must be manually initialized with a hash and
+    /// then manually searched. After this, insertions into a vacant entry
+    /// still require an owned key to be provided.
+    ///
+    /// Raw entries are useful for such exotic situations as:
+    ///
+    /// * Hash memoization
+    /// * Deferring the creation of an owned key until it is known to be required
+    /// * Using a search key that doesn't work with the Borrow trait
+    /// * Using custom comparison logic without newtype wrappers
+    ///
+    /// Because raw entries provide much more low-level control, it's much easier
+    /// to put the HashMap into an inconsistent state which, while memory-safe,
+    /// will cause the map to produce seemingly random results. Higher-level and
+    /// more foolproof APIs like `entry` should be preferred when possible.
+    ///
+    /// In particular, the hash used to initialized the raw entry must still be
+    /// consistent with the hash of the key that is ultimately stored in the entry.
+    /// This is because implementations of HashMap may need to recompute hashes
+    /// when resizing, at which point only the keys are available.
+    ///
+    /// Raw entries give mutable access to the keys. This must not be used
+    /// to modify how the key would compare or hash, as the map will not re-evaluate
+    /// where the key should go, meaning the keys may become "lost" if their
+    /// location does not reflect their state. For instance, if you change a key
+    /// so that the map now contains keys which compare equal, search may start
+    /// acting erratically, with two keys randomly masking each other. Implementations
+    /// are free to assume this doesn't happen (within the limits of memory-safety).
+    #[inline]
+    pub fn raw_entry_mut(&mut self) -> RawEntryBuilderMut<'_, K, V> {
+        RawEntryBuilderMut { map: self }
+    }
+
+    /// Creates a raw immutable entry builder for the HashMap.
+    ///
+    /// Raw entries provide the lowest level of control for searching and
+    /// manipulating a map. They must be manually initialized with a hash and
+    /// then manually searched.
+    ///
+    /// This is useful for
+    /// * Hash memoization
+    /// * Using a search key that doesn't work with the Borrow trait
+    /// * Using custom comparison logic without newtype wrappers
+    ///
+    /// Unless you are in such a situation, higher-level and more foolproof APIs like
+    /// `get` should be preferred.
+    ///
+    /// Immutable raw entries have very limited use; you might instead want `raw_entry_mut`.
+    #[inline]
+    pub fn raw_entry(&self) -> RawEntryBuilder<'_, K, V> {
+        RawEntryBuilder { map: self }
+    }
+
+    /// Gets the given key's corresponding entry in the map for in-place manipulation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ordnung::Map;
+    ///
+    /// let mut letters = Map::new();
+    ///
+    /// for ch in "a short treatise on fungi".chars() {
+    ///     let counter = letters.entry(ch).or_insert(0);
+    ///     *counter += 1;
+    /// }
+    ///
+    /// assert_eq!(letters[&'s'], 2);
+    /// assert_eq!(letters[&'t'], 3);
+    /// assert_eq!(letters[&'u'], 1);
+    /// assert_eq!(letters.get(&'y'), None);
+    /// ```
+    pub fn entry(&mut self, key: K) -> Entry<K, V>
+    where
+        K: Eq + Clone,
+    {
+        for (idx, n) in self.store.iter().enumerate() {
+            if &key == &n.key {
+                return Entry::Occupied(OccupiedEntry::new(idx, key, self));
+            }
+        }
+        Entry::Vacant(VacantEntry::new(key, self))
     }
 }
 
@@ -530,13 +614,13 @@ impl<K, V> Iterator for IntoIter<K, V> {
     type Item = (K, V);
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        loop{
+        loop {
             if let Some(n) = self.0.store.pop() {
                 if let Some(v) = n.value {
-                    return Some((n.key, v))
-                } 
+                    return Some((n.key, v));
+                }
             } else {
-                return None
+                return None;
             }
         }
     }
@@ -546,7 +630,6 @@ impl<K, V> Iterator for IntoIter<K, V> {
         (l, Some(l))
     }
 }
-
 
 impl<K, Q: ?Sized, V> Index<&Q> for Map<K, V>
 where
@@ -573,7 +656,7 @@ where
 {
     fn from_iter<I>(iter: I) -> Self
     where
-        I: IntoIterator<Item=(IK, IV)>,
+        I: IntoIterator<Item = (IK, IV)>,
     {
         let iter = iter.into_iter();
         let mut map = Map::with_capacity(iter.size_hint().0);
@@ -600,7 +683,10 @@ where
         }
 
         // Faster than .get() since we can avoid hashing
-        for &Node { ref value, hash, .. } in self.store.iter() {
+        for &Node {
+            ref value, hash, ..
+        } in self.store.iter()
+        {
             if let Hit(idx) = other.find(hash) {
                 if &other.store[idx].value == value {
                     continue;
@@ -633,9 +719,7 @@ pub struct IterMut<'a, K, V> {
 impl<K, V> Iter<'_, K, V> {
     /// Create an empty iterator that always returns `None`
     pub fn empty() -> Self {
-        Iter {
-            inner: [].iter()
-        }
+        Iter { inner: [].iter() }
     }
 }
 
@@ -683,7 +767,7 @@ impl<K, V> IterMut<'_, K, V> {
     /// Create an empty iterator that always returns `None`
     pub fn empty() -> Self {
         IterMut {
-            inner: [].iter_mut()
+            inner: [].iter_mut(),
         }
     }
 }
