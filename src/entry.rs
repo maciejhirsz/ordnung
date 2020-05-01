@@ -3,7 +3,7 @@
 //! their copyright.
 
 use super::*;
-use core::hash::{Hash, Hasher};
+use core::hash::Hash;
 
 use core::mem;
 // use std::fmt::{self, Debug};
@@ -16,19 +16,44 @@ use core::mem;
 ///
 /// [`HashMap`]: struct.HashMap.html
 /// [`entry`]: struct.HashMap.html#method.entry
-pub enum Entry<'a, K, V, H> {
+pub enum Entry<'a, K, V> {
     /// An occupied entry.
-    Occupied(OccupiedEntry<'a, K, V, H>),
+    Occupied(OccupiedEntry<'a, K, V>),
 
     /// A vacant entry.
-    Vacant(VacantEntry<'a, K, V, H>),
+    Vacant(VacantEntry<'a, K, V>),
 }
 
-impl<'a, K, V, H> Entry<'a, K, V, H>
+impl<'a, K, V> Entry<'a, K, V>
 where
     K: Clone,
-    H: Hasher + Default,
 {
+
+    /// Sets the value of the entry, and returns a mutable reference to the
+    /// value in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ordnung::Map;
+    ///
+    /// let mut map: Map<&str, u32> = Map::new();
+    ///
+    /// map.entry("poneyland").insert(3);
+    /// assert_eq!(map["poneyland"], 3);
+    ///
+    /// map.entry("poneyland").insert(10);
+    /// assert_eq!(map["poneyland"], 10);
+    pub fn insert(self, value: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(mut occupied) => {
+                occupied.insert(value);
+                occupied.into_mut()
+            },
+            Entry::Vacant(vacant) => vacant.insert(value),
+        }
+    }
+
     /// Ensures a value is in the entry by inserting the default if empty, and returns
     /// a mutable reference to the value in the entry.
     ///
@@ -94,9 +119,9 @@ where
     /// ```
     #[inline]
     pub fn key(&self) -> &K {
-        match *self {
-            Entry::Occupied(ref entry) => entry.key(),
-            Entry::Vacant(ref entry) => entry.key(),
+        match self {
+            Entry::Occupied(entry) => entry.key(),
+            Entry::Vacant(entry) => entry.key(),
         }
     }
 
@@ -150,19 +175,17 @@ impl<K: fmt::Debug, V: fmt::Debug, S> fmt::Debug for Entry<'_, K, V, S> {
 /// It is part of the [`Entry`] enum.
 ///
 /// [`Entry`]: enum.Entry.html
-pub struct OccupiedEntry<'a, K, V, H> {
-    idx: usize,
-    key: Option<K>,
-    map: &'a mut Map<K, V, H>,
+pub struct OccupiedEntry<'a, K, V> {
+    pair: &'a mut Option<KeyValue<K, V>>,
 }
 
-unsafe impl<K, V, H> Send for OccupiedEntry<'_, K, V, H>
+unsafe impl<K, V> Send for OccupiedEntry<'_, K, V>
 where
     K: Send,
     V: Send,
 {
 }
-unsafe impl<K, V, H> Sync for OccupiedEntry<'_, K, V, H>
+unsafe impl<K, V> Sync for OccupiedEntry<'_, K, V>
 where
     K: Sync,
     V: Sync,
@@ -180,16 +203,10 @@ impl<K: Debug, V: Debug, S> Debug for OccupiedEntry<'_, K, V, S> {
 }
 */
 
-impl<'a, K, V, H> OccupiedEntry<'a, K, V, H>
-where
-    K: Clone,
-{
-    pub(crate) fn new(idx: usize, key: K, map: &'a mut Map<K, V, H>) -> Self {
-        Self {
-            idx,
-            key: Some(key),
-            map,
-        }
+impl<'a, K, V> OccupiedEntry<'a, K, V> {
+    #[inline]
+    pub(crate) fn new(pair: &'a mut Option<KeyValue<K, V>>) -> Self {
+        Self { pair }
     }
 
     /// Gets a reference to the key in the entry.
@@ -205,7 +222,10 @@ where
     /// ```
     #[inline]
     pub fn key(&self) -> &K {
-        unsafe { &self.map.store.get_unchecked(self.idx).key }
+        match &*self.pair {
+            Some(pair) => &pair.key,
+            None => unreachable!(),
+        }
     }
 
     /// Take the ownership of the key and value from the map.
@@ -228,9 +248,10 @@ where
     /// ```
     #[inline]
     pub fn remove_entry(self) -> (K, V) {
-        let n = unsafe { self.map.store.get_unchecked_mut(self.idx) };
-
-        (n.key.clone(), n.value.take().unwrap())
+        match self.pair.take() {
+            Some(pair) => (pair.key, pair.value),
+            None => unreachable!(),
+        }
     }
 
     /// Gets a reference to the value in the entry.
@@ -250,12 +271,9 @@ where
     /// ```
     #[inline]
     pub fn get(&self) -> &V {
-        unsafe {
-            if let Node { value: Some(v), .. } = self.map.store.get_unchecked(self.idx) {
-                v
-            } else {
-                unreachable!()
-            }
+        match &*self.pair {
+            Some(pair) => &pair.value,
+            None => unreachable!(),
         }
     }
 
@@ -288,12 +306,9 @@ where
     /// ```
     #[inline]
     pub fn get_mut(&mut self) -> &mut V {
-        unsafe {
-            if let Node { value: Some(v), .. } = self.map.store.get_unchecked_mut(self.idx) {
-                v
-            } else {
-                unreachable!()
-            }
+        match self.pair {
+            Some(pair) => &mut pair.value,
+            None => unreachable!(),
         }
     }
 
@@ -322,12 +337,9 @@ where
     /// ```
     #[inline]
     pub fn into_mut(self) -> &'a mut V {
-        unsafe {
-            if let Node { value: Some(v), .. } = self.map.store.get_unchecked_mut(self.idx) {
-                v
-            } else {
-                unreachable!()
-            }
+        match self.pair {
+            Some(pair) => &mut pair.value,
+            None => unreachable!(),
         }
     }
 
@@ -349,10 +361,8 @@ where
     /// assert_eq!(map["poneyland"], 15);
     /// ```
     #[inline]
-    pub fn insert(&mut self, mut value: V) -> V {
-        let old_value = self.get_mut();
-        mem::swap(&mut value, old_value);
-        value
+    pub fn insert(&mut self, value: V) -> V {
+        mem::replace(self.get_mut(), value)
     }
 
     /// Takes the value out of the entry, and returns it.
@@ -376,82 +386,15 @@ where
     pub fn remove(self) -> V {
         self.remove_entry().1
     }
-
-    /// Replaces the entry, returning the old key and value. The new key in the hash map will be
-    /// the key used to create this entry.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ordnung::{Entry, Map};
-    /// use std::rc::Rc;
-    ///
-    /// let mut map: Map<Rc<String>, u32> = Map::new();
-    /// map.insert(Rc::new("Stringthing".to_string()), 15);
-    ///
-    /// let my_key = Rc::new("Stringthing".to_string());
-    ///
-    /// if let Entry::Occupied(entry) = map.entry(my_key) {
-    ///     // Also replace the key with a handle to our other key.
-    ///     let (old_key, old_value): (Rc<String>, u32) = entry.replace_entry(16);
-    /// }
-    ///
-    /// ```
-    #[inline]
-    pub fn replace_entry(self, value: V) -> (K, V) {
-        if let Node {
-            value: Some(cur_val),
-            key: cur_key,
-            ..
-        } = unsafe { self.map.store.get_unchecked_mut(self.idx) }
-        {
-            let old_key = mem::replace(cur_key, self.key.unwrap());
-            let old_value = mem::replace(cur_val, value);
-
-            (old_key, old_value)
-        } else {
-            unreachable!()
-        }
-    }
-
-    /// Replaces the key in the hash map with the key used to create this entry.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ordnung::{Entry, Map};
-    /// use std::rc::Rc;
-    ///
-    /// let mut map: Map<Rc<String>, u32> = Map::new();
-    /// let mut known_strings: Vec<Rc<String>> = Vec::new();
-    ///
-    /// // Initialise known strings, run program, etc.
-    ///
-    /// reclaim_memory(&mut map, &known_strings);
-    ///
-    /// fn reclaim_memory(map: &mut Map<Rc<String>, u32>, known_strings: &[Rc<String>] ) {
-    ///     for s in known_strings {
-    ///         if let Entry::Occupied(entry) = map.entry(s.clone()) {
-    ///             // Replaces the entry's key with our version of it in `known_strings`.
-    ///             entry.replace_key();
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    #[inline]
-    pub fn replace_key(self) -> K {
-        let key = unsafe { &mut self.map.store.get_unchecked_mut(self.idx).key };
-        mem::replace(key, self.key.unwrap())
-    }
 }
 
 /// A view into a vacant entry in a `HashMap`.
 /// It is part of the [`Entry`] enum.
 ///
 /// [`Entry`]: enum.Entry.html
-pub struct VacantEntry<'a, K, V, H> {
+pub struct VacantEntry<'a, K, V> {
     key: K,
-    map: &'a mut Map<K, V, H>,
+    pair: &'a mut Option<KeyValue<K, V>>,
 }
 
 /*
@@ -462,12 +405,10 @@ impl<K: Debug, V, S> Debug for VacantEntry<'_, K, V, S> {
 }
 */
 
-impl<'a, K, V, H> VacantEntry<'a, K, V, H>
-where
-    H: Hasher + Default,
-{
-    pub(crate) fn new(key: K, map: &'a mut Map<K, V, H>) -> Self {
-        Self { key, map }
+impl<'a, K, V> VacantEntry<'a, K, V> {
+    #[inline]
+    pub(crate) fn new(key: K, pair: &'a mut Option<KeyValue<K, V>>) -> Self {
+        Self { key, pair }
     }
     /// Gets a reference to the key that would be used when inserting a value
     /// through the `VacantEntry`.
@@ -500,7 +441,10 @@ where
     /// }
     /// ```
     #[inline]
-    pub fn into_key(self) -> K {
+    pub fn into_key(self) -> K
+    where
+        K: Clone,
+    {
         self.key
     }
 
@@ -521,16 +465,12 @@ where
     /// assert_eq!(map["poneyland"], 37);
     /// ```
     #[inline]
-    pub fn insert(self, value: V) -> &'a mut V
-    where
-        K: Eq + Hash,
-    {
-        let i = self.map.store.len();
-        self.map.insert(self.key, value);
-        if let Node { value: Some(v), .. } = unsafe { self.map.store.get_unchecked_mut(i) } {
-            v
-        } else {
-            unreachable!()
+    pub fn insert(self, value: V) -> &'a mut V {
+        *self.pair = Some(KeyValue { key: self.key, value });
+
+        match self.pair {
+            Some(pair) => &mut pair.value,
+            None => unreachable!(),
         }
     }
 }

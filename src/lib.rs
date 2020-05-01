@@ -36,13 +36,11 @@ use core::{fmt, slice};
 
 pub mod compact;
 mod entry;
-mod raw_entry;
 
 use ahash::AHasher;
 
 pub use compact::Vec;
 pub use entry::*;
-pub use raw_entry::*;
 // use alloc::vec::Vec;
 
 /// Iterator over the keys
@@ -80,25 +78,27 @@ impl<'a, K, V> Iterator for Values<'a, K, V> {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct KeyValue<K, V> {
+    key: K,
+    value: V,
+}
+
 #[derive(Clone)]
 struct Node<K, V> {
-    // Key
-    pub key: K,
-
-    // Hash of the key
+    /// Hash of the key
     pub hash: u64,
 
-    // Value stored. We'll use `None` as a sentinel value for removed
-    // entries.
-    pub value: Option<V>,
+    /// Key and value stored on this node. Set to `None` for deleted entries.
+    pub pair: Option<KeyValue<K, V>>,
 
-    // Store vector index pointing to the `Node` for which `hash` is smaller
-    // than that of this `Node`.
+    /// Store vector index pointing to the `Node` for which `hash` is smaller
+    /// than that of this `Node`.
     pub left: Cell<Option<NonZeroU32>>,
 
-    // Same as above but for `Node`s with hash larger than this one. If the
-    // hash is the same, but keys are different, the lookup will default
-    // to the right branch as well.
+    /// Same as above but for `Node`s with hash larger than this one. If the
+    /// hash is the same, but keys are different, the lookup will default
+    /// to the right branch as well.
     pub right: Cell<Option<NonZeroU32>>,
 }
 
@@ -108,10 +108,20 @@ where
     V: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(
-            &(&self.key, &self.value, self.left.get(), self.right.get()),
-            f,
-        )
+        match &self.pair {
+            Some(pair) => {
+                fmt::Debug::fmt(
+                    &(&pair.key, &pair.value, self.left.get(), self.right.get()),
+                    f,
+                )
+            },
+            None => {
+                fmt::Debug::fmt(
+                    &("<removed>", self.left.get(), self.right.get()),
+                    f,
+                )
+            },
+        }
     }
 }
 
@@ -121,7 +131,7 @@ where
     V: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && self.key == other.key && self.value == other.value
+        self.hash == other.hash && self.pair == other.pair
     }
 }
 
@@ -129,9 +139,18 @@ impl<K, V> Node<K, V> {
     #[inline]
     const fn new(key: K, value: V, hash: u64) -> Self {
         Node {
-            key,
             hash,
-            value: Some(value),
+            pair: Some(KeyValue { key, value }),
+            left: Cell::new(None),
+            right: Cell::new(None),
+        }
+    }
+
+    #[inline]
+    const fn new_empty(hash: u64) -> Self {
+        Node {
+            hash,
+            pair: None,
             left: Cell::new(None),
             right: Cell::new(None),
         }
@@ -228,7 +247,10 @@ where
         let hash = Self::hash_key(&key);
 
         match self.find(hash) {
-            Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.replace(value) },
+            Hit(idx) => {
+                let pair = unsafe { &mut self.store.get_unchecked_mut(idx).pair };
+                pair.replace(KeyValue { key, value }).map(|pair| pair.value)
+            },
             Miss(parent) => {
                 if let Some(parent) = parent {
                     parent.set(NonZeroU32::new(self.store.len() as u32));
@@ -267,7 +289,7 @@ where
             Hit(idx) => {
                 let node = unsafe { self.store.get_unchecked(idx) };
 
-                node.value.as_ref()
+                node.pair.as_ref().map(|pair| &pair.value)
             }
             Miss(_) => None,
         }
@@ -298,7 +320,11 @@ where
         let hash = Self::hash_key(key);
 
         match self.find(hash) {
-            Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.as_mut() },
+            Hit(idx) => {
+                let node = unsafe { self.store.get_unchecked_mut(idx) };
+
+                node.pair.as_mut().map(|pair| &mut pair.value)
+            },
             Miss(_) => None,
         }
     }
@@ -326,41 +352,8 @@ where
         let hash = Self::hash_key(key);
 
         match self.find(hash) {
-            Hit(idx) => unsafe { self.store.get_unchecked(idx).value.is_some() },
+            Hit(idx) => unsafe { self.store.get_unchecked(idx).pair.is_some() },
             Miss(_) => false,
-        }
-    }
-
-    /// Get a mutable reference to entry at key. Inserts a new entry by
-    /// calling `F` if absent.
-    // TODO: Replace with entry API
-    pub fn get_or_insert<F>(&mut self, key: K, fill: F) -> &mut V
-    where
-        F: FnOnce() -> V,
-    {
-        let hash = Self::hash_key(&key);
-
-        match self.find(hash) {
-            Hit(idx) => {
-                let node = unsafe { self.store.get_unchecked_mut(idx) };
-
-                if node.value.is_none() {
-                    node.value = Some(fill());
-                }
-
-                node.value.as_mut().unwrap()
-            }
-            Miss(parent) => {
-                let idx = self.store.len();
-
-                if let Some(parent) = parent {
-                    parent.set(NonZeroU32::new(self.store.len() as u32));
-                }
-
-                self.store.push(Node::new(key, fill(), hash));
-
-                self.store[idx].value.as_mut().unwrap()
-            }
         }
     }
 
@@ -388,7 +381,11 @@ where
         let hash = Self::hash_key(key);
 
         match self.find(hash) {
-            Hit(idx) => unsafe { self.store.get_unchecked_mut(idx).value.take() },
+            Hit(idx) => {
+                let node = unsafe { self.store.get_unchecked_mut(idx) };
+
+                node.pair.take().map(|pair| pair.value)
+            },
             Miss(_) => return None,
         }
     }
@@ -518,62 +515,6 @@ where
         }
     }
 
-    /// Creates a raw entry builder for the HashMap.
-    ///
-    /// Raw entries provide the lowest level of control for searching and
-    /// manipulating a map. They must be manually initialized with a hash and
-    /// then manually searched. After this, insertions into a vacant entry
-    /// still require an owned key to be provided.
-    ///
-    /// Raw entries are useful for such exotic situations as:
-    ///
-    /// * Hash memoization
-    /// * Deferring the creation of an owned key until it is known to be required
-    /// * Using a search key that doesn't work with the Borrow trait
-    /// * Using custom comparison logic without newtype wrappers
-    ///
-    /// Because raw entries provide much more low-level control, it's much easier
-    /// to put the HashMap into an inconsistent state which, while memory-safe,
-    /// will cause the map to produce seemingly random results. Higher-level and
-    /// more foolproof APIs like `entry` should be preferred when possible.
-    ///
-    /// In particular, the hash used to initialized the raw entry must still be
-    /// consistent with the hash of the key that is ultimately stored in the entry.
-    /// This is because implementations of HashMap may need to recompute hashes
-    /// when resizing, at which point only the keys are available.
-    ///
-    /// Raw entries give mutable access to the keys. This must not be used
-    /// to modify how the key would compare or hash, as the map will not re-evaluate
-    /// where the key should go, meaning the keys may become "lost" if their
-    /// location does not reflect their state. For instance, if you change a key
-    /// so that the map now contains keys which compare equal, search may start
-    /// acting erratically, with two keys randomly masking each other. Implementations
-    /// are free to assume this doesn't happen (within the limits of memory-safety).
-    #[inline]
-    pub fn raw_entry_mut(&mut self) -> RawEntryBuilderMut<'_, K, V, H> {
-        RawEntryBuilderMut { map: self }
-    }
-
-    /// Creates a raw immutable entry builder for the HashMap.
-    ///
-    /// Raw entries provide the lowest level of control for searching and
-    /// manipulating a map. They must be manually initialized with a hash and
-    /// then manually searched.
-    ///
-    /// This is useful for
-    /// * Hash memoization
-    /// * Using a search key that doesn't work with the Borrow trait
-    /// * Using custom comparison logic without newtype wrappers
-    ///
-    /// Unless you are in such a situation, higher-level and more foolproof APIs like
-    /// `get` should be preferred.
-    ///
-    /// Immutable raw entries have very limited use; you might instead want `raw_entry_mut`.
-    #[inline]
-    pub fn raw_entry(&self) -> RawEntryBuilder<'_, K, V, H> {
-        RawEntryBuilder { map: self }
-    }
-
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     ///
     /// # Examples
@@ -593,16 +534,63 @@ where
     /// assert_eq!(letters[&'u'], 1);
     /// assert_eq!(letters.get(&'y'), None);
     /// ```
-    pub fn entry(&mut self, key: K) -> Entry<K, V, H>
-    where
-        K: Eq + Clone,
-    {
-        for (idx, n) in self.store.iter().enumerate() {
-            if &key == &n.key {
-                return Entry::Occupied(OccupiedEntry::new(idx, key, self));
+    #[inline]
+    pub fn entry(&mut self, key: K) -> Entry<K, V> {
+        let hash = Self::hash_key(&key);
+
+        self.entry_with_hash_internal(key, hash)
+    }
+
+    /// Gets the given key's corresponding entry in the map for in-place manipulation,
+    /// using a precomputed `hash`.
+    ///
+    /// # Safety
+    ///
+    /// Using a hash value that does not match the hash of the `key` will render the
+    /// entire `Map` unsound.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ordnung::Map;
+    /// use fnv::FnvHasher;
+    ///
+    /// let mut map: Map<&str, i32, FnvHasher> = Map::default();
+    ///
+    /// map.insert("Life", 0);
+    /// assert_eq!(map.get("Life"), Some(&0));
+    ///
+    /// unsafe { map.entry_with_hash("Life", 0x333014b51eed9020) }.insert(42);
+    /// assert_eq!(map.get("Life"), Some(&42));
+    /// ```
+    #[inline]
+    pub unsafe fn entry_with_hash(&mut self, key: K, hash: u64) -> Entry<K, V> {
+        self.entry_with_hash_internal(key, hash)
+    }
+
+    fn entry_with_hash_internal(&mut self, key: K, hash: u64) -> Entry<K, V> {
+        let idx = match self.find(hash) {
+            Hit(idx) => idx,
+            Miss(parent) => {
+                let idx = self.store.len();
+
+                if let Some(parent) = parent {
+                    parent.set(NonZeroU32::new(idx as u32));
+                }
+
+                self.store.push(Node::new_empty(hash));
+
+                idx
             }
+        };
+
+        let pair = unsafe { &mut self.store.get_unchecked_mut(idx).pair };
+
+        if pair.is_some() {
+            Entry::Occupied(OccupiedEntry::new(pair))
+        } else {
+            Entry::Vacant(VacantEntry::new(key, pair))
         }
-        Entry::Vacant(VacantEntry::new(key, self))
     }
 }
 
@@ -635,8 +623,8 @@ impl<K, V> Iterator for IntoIter<K, V> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(n) = self.0.store.pop() {
-                if let Some(v) = n.value {
-                    return Some((n.key, v));
+                if let Some(pair) = n.pair {
+                    return Some((pair.key, pair.value));
                 }
             } else {
                 return None;
@@ -702,12 +690,9 @@ where
         }
 
         // Faster than .get() since we can avoid hashing
-        for &Node {
-            ref value, hash, ..
-        } in self.store.iter()
-        {
+        for &Node { ref pair, hash, .. } in self.store.iter() {
             if let Hit(idx) = other.find(hash) {
-                if &other.store[idx].value == value {
+                if &other.store[idx].pair == pair {
                     continue;
                 }
             }
@@ -748,12 +733,9 @@ impl<'i, K, V> Iterator for Iter<'i, K, V> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.inner.next() {
-            let value = match node.value {
-                Some(ref value) => value,
-                None => continue,
-            };
-
-            return Some((&node.key, value));
+            if let Some(pair) = &node.pair {
+                return Some((&pair.key, &pair.value));
+            }
         }
 
         None
@@ -764,12 +746,9 @@ impl<K, V> DoubleEndedIterator for Iter<'_, K, V> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.inner.next_back() {
-            let value = match node.value {
-                Some(ref value) => value,
-                None => continue,
-            };
-
-            return Some((&node.key, value));
+            if let Some(pair) = &node.pair {
+                return Some((&pair.key, &pair.value));
+            }
         }
 
         None
@@ -797,12 +776,9 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.inner.next() {
-            let value = match node.value {
-                Some(ref mut value) => value,
-                None => continue,
-            };
-
-            return Some((&node.key, value));
+            if let Some(pair) = &mut node.pair {
+                return Some((&pair.key, &mut pair.value));
+            }
         }
 
         None
@@ -813,12 +789,9 @@ impl<K, V> DoubleEndedIterator for IterMut<'_, K, V> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.inner.next_back() {
-            let value = match node.value {
-                Some(ref mut value) => value,
-                None => continue,
-            };
-
-            return Some((&node.key, value));
+            if let Some(pair) = &mut node.pair {
+                return Some((&pair.key, &mut pair.value));
+            }
         }
 
         None
